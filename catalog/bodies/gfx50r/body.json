@@ -73,6 +73,18 @@
               "clear_bits": [],
               "handshake_ticks": 16666,
               "basis": "GFX 50R 3.11 display control bit-16 handshake polled by 0xcf6adc. A falling request completes after the declared frame period; the delay is not measured."
+            },
+            {
+              "base": 4294336512,
+              "size": 4096,
+              "set_bits": [],
+              "clear_bits": [
+                {
+                  "offset": 0,
+                  "mask": 268435456
+                }
+              ],
+              "basis": "GFX 50R 3.11 configuration copy 0xcfc644 writes 0xfff66000, +0x4, +0x20 and +0xc8. The words are declared to read back their last write; no camera capture of this page exists. Routine 0xcfd224 sets bit 28 of +0 and polls until it reads clear, the same request as the X-T20 2.11 0xca9df0 at output 1 +0x2000; it is declared to complete at once, not measured."
             }
           ]
         }

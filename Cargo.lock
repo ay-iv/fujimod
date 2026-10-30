@@ -2609,6 +2609,7 @@ dependencies = [
  "fujimod-emulator-ip-dmp",
  "fujimod-emulator-parts-controls",
  "fujimod-emulator-storage",
+ "fujimod-emulator-xp4-display",
  "fujimod-emulator-xp4-io",
  "fujimod-framebuffer",
  "fujimod-framebuffer-xpp",
