@@ -2586,6 +2586,7 @@ dependencies = [
  "fujimod-emulator-ip-arm",
  "fujimod-emulator-ip-dmp",
  "fujimod-emulator-storage",
+ "fujimod-emulator-xp4-display",
  "fujimod-emulator-xp4-io",
  "fujimod-virtual-scene",
  "fujimod-workspace-hack",

@@ -12,6 +12,10 @@
 //! high again before it programs the DWC3. What those bits gate is not
 //! modeled.
 //!
+//! GFX 50R 3.11 0xa9c44c configures +0x200..+0x228 and then polls +0x208 bit
+//! 7 with a timeout, as a PCIe link wait. Nothing sets that bit here, so the
+//! firmware takes its link-down return. The real link state is not measured.
+//!
 //! +0x08 holds the polarity of the sixteen external interrupt lines: bit n
 //! set inverts line n (0xc694d4). Line n is interrupt 151 + n (0xc5cfd4 maps
 //! interrupt rows to lines). [`ExternalLines`] drives the interrupt of each
@@ -29,8 +33,9 @@ use std::sync::{Arc, Mutex};
 
 /// Register window size in bytes.
 pub const WINDOW: u64 = 0x1000;
-const WORDS: [u64; 12] = [
-    0x08, 0x14, 0x1c, 0x20, 0x6c, 0x70, 0x88, 0x9c, 0x100, 0x10c, 0x110, 0x118,
+const WORDS: [u64; 20] = [
+    0x08, 0x14, 0x1c, 0x20, 0x6c, 0x70, 0x88, 0x9c, 0x100, 0x10c, 0x110, 0x118, 0x200, 0x204, 0x208,
+    0x218, 0x21c, 0x220, 0x224, 0x228,
 ];
 const SD_RESETS: u64 = 0x1c;
 const SD_CHANNELS: usize = 3;

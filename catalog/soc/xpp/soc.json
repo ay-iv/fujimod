@@ -1013,6 +1013,12 @@
               "basis": "Memory port block at 0xff148000 of X-T20 2.11 stage 2: the resident start writes 0xf to +0x104 of the blocks at 0xff142000, 0xff143000, 0xff147000 and 0xff148000 (store helper 0x8338 at 0x8340) before its flash set-up. +0x104 is the memory port access mask word that FujiMod's X-Processor Pro boot controller models for the ROM's own writes (memory_port_bases); a resident start runs without that controller. The words read back their last write; no arbitration is modeled."
             },
             {
+              "base": 4290772992,
+              "size": 4096,
+              "idle_bits": [],
+              "basis": "Inferred PCIe root-port configuration space: GFX 50R 3.11 0xaa0bbc programs a DesignWare-style address-translation viewport at +0x900..+0x91c. 0xa9c44c configures it only before and after the link poll of 0xfff0a208 bit 7. Reset values are not measured and read 0."
+            },
+            {
               "base": 4293980160,
               "size": 4096,
               "idle_bits": [
