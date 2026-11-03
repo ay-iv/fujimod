@@ -107,6 +107,38 @@ fn soc_profile<'a>(resolved: &'a ResolvedConfiguration) -> Result<&'a SocProfile
         })
 }
 
+/// The SoC maps with the selected body profile's maps replacing whole entries,
+/// as the reference projection does; a body cannot add or remove a map.
+fn body_register_maps(
+    resolved: &ResolvedConfiguration,
+    soc: &RegisterLayouts,
+) -> Result<RegisterLayouts, String> {
+    let id = resolved
+        .configuration
+        .preset
+        .as_ref()
+        .and_then(|preset| preset.hardware_selection.as_ref())
+        .map(|selection| &selection.body_profile_id);
+    let body = id.and_then(|id| {
+        resolved.reference.body.hardware.as_ref()?.profiles.get(id)?.register_maps.as_ref()
+    });
+    let Some(body) = body else {
+        return Ok(soc.clone());
+    };
+    let to_map = |maps: &RegisterLayouts| match serde_json::to_value(maps) {
+        Ok(Value::Object(map)) => Ok(map),
+        _ => Err("register maps are not an object".to_string()),
+    };
+    let mut merged = to_map(soc)?;
+    for (name, value) in to_map(body)? {
+        if !merged.contains_key(&name) {
+            return Err("Body register behavior names an undeclared processor map".into());
+        }
+        merged.insert(name, value);
+    }
+    serde_json::from_value(Value::Object(merged)).map_err(|e| e.to_string())
+}
+
 fn bits(bits: &RegisterIdleBits) -> Value {
     json!([bits.offset, bits.mask])
 }
@@ -367,13 +399,6 @@ fn nodes(
         maps.pl330.is_some(),
         "flash DMA",
     )?;
-    if maps
-        .display_frames
-        .as_ref()
-        .is_some_and(|f| f.timing.is_some())
-    {
-        return Err("X-Processor Pro display timing banks have no graph node".into());
-    }
     // The imaging pipeline's frame period, when declared, replaces each
     // imaging law's own period; display frames keep theirs.
     let frame_period = |declared: u64| {
@@ -735,6 +760,7 @@ fn nodes(
             "display-frames".into(),
             json!({
                 "kind": "display-frames", "irqs": frames.irq_routes, "period_ticks": frames.period_ticks,
+                "timing": frames.timing.as_ref().map(|t| json!([t.bases, t.stop_ticks])),
             }),
         );
     }
@@ -890,10 +916,13 @@ pub fn assemble(resolved: &ResolvedConfiguration, inputs: &Inputs<'_>) -> Result
             selection.soc.id
         ));
     }
-    let maps = profile
-        .register_maps
-        .as_ref()
-        .ok_or("X-Processor Pro assembly requires the SoC register maps")?;
+    let maps = &body_register_maps(
+        resolved,
+        profile
+            .register_maps
+            .as_ref()
+            .ok_or("X-Processor Pro assembly requires the SoC register maps")?,
+    )?;
     let gic = maps
         .gic
         .as_ref()

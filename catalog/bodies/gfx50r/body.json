@@ -72,7 +72,8 @@
               "set_bits": [],
               "clear_bits": [],
               "handshake_ticks": 16666,
-              "basis": "GFX 50R 3.11 display control bit-16 handshake polled by 0xcf6adc. A falling request completes after the declared frame period; the delay is not measured."
+              "scanout": { "output": 0, "period_ticks": 800000 },
+              "basis": "GFX 50R 3.11 display control bit-16 handshake polled by 0xcf6adc. A falling request completes after the declared frame period; the delay is not measured. Scanout: emulated GFX 50R 3.11 at 700M instructions holds the X-T20 output 1 layout here: video format 0x333 at +0x010, size 0x3ff02ff (1024 x 768) at +0x02c, buffer +0x030, OSD layer 0 enabled at +0x200 with size +0x220 and buffer +0x230. Captured as host output 0; the period is a declared capture rate, not panel timing."
             },
             {
               "base": 4294336512,
