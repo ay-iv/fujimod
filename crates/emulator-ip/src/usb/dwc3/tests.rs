@@ -285,6 +285,17 @@ fn reset_and_generic_commands_complete_only_at_their_deadlines() {
 }
 
 #[test]
+fn soft_reset_stops_a_running_core() {
+    let (mut d, mut b) = ready(0x9988);
+    assert!(d.state.running);
+    write(&mut d, &mut b, DCTL, RESET | RUN).unwrap();
+    let at = b.now + 8;
+    tick(&mut d, &mut b, at);
+    assert!(!d.state.running);
+    assert_eq!(d.reg(DCTL), 0);
+}
+
+#[test]
 fn in_transactions_preserve_owned_trbs_until_completion_and_honor_halt() {
     let (mut d, mut b) = ready(0x9988);
     endpoint(&mut d, &mut b, 3, 8);

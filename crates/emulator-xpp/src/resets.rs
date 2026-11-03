@@ -33,11 +33,19 @@ use std::sync::{Arc, Mutex};
 
 /// Register window size in bytes.
 pub const WINDOW: u64 = 0x1000;
-const WORDS: [u64; 20] = [
-    0x08, 0x14, 0x1c, 0x20, 0x6c, 0x70, 0x88, 0x9c, 0x100, 0x10c, 0x110, 0x118, 0x200, 0x204, 0x208,
-    0x218, 0x21c, 0x220, 0x224, 0x228,
+const WORDS: [u64; 22] = [
+    0x08, 0x14, 0x1c, 0x20, 0x6c, 0x70, 0x88, 0x9c, 0x100, 0x10c, 0x110, 0x118, 0x11c, 0x120,
+    0x200, 0x204, 0x208, 0x218, 0x21c, 0x220, 0x224, 0x228,
 ];
 const SD_RESETS: u64 = 0x1c;
+/// PLL control word and its status word: stream 2 init 0x186c5e8 sets bits in +0x118, then
+/// waits for bit 16 of +0x120. Declared lock once +0x118 has been written; not measured.
+const PLL_CONTROL: u64 = 0x118;
+const PLL_STATUS: u64 = 0x120;
+const PLL_LOCKED: u32 = 1 << 16;
+/// A write to +0x110 (dividers, 0x186c600) restarts the lock: the next status read shows it
+/// unlocked (0x186c640 waits for bit 16 clear), later reads locked. Declared, not measured.
+const PLL_DIVIDERS: u64 = 0x110;
 const SD_CHANNELS: usize = 3;
 const SD_FIRST_BIT: u32 = 18;
 const POLARITY: u64 = 0x08;
@@ -134,6 +142,8 @@ struct State {
     pulses: [u64; SD_CHANNELS],
     #[serde(default, skip_serializing_if = "is_zero")]
     lines: u32,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    relocking: bool,
 }
 fn is_zero(levels: &u32) -> bool {
     *levels == 0
@@ -144,6 +154,7 @@ pub struct Gates {
     sd: [ResetPulses; SD_CHANNELS],
     lines: ExternalLines,
     selector: Option<(Vec<fujimod_emulator_devices::signals::Level>, u32, u32)>,
+    relocking: bool,
 }
 impl Gates {
     pub fn new(base: u64) -> Result<Self, String> {
@@ -156,6 +167,7 @@ impl Gates {
             sd: Default::default(),
             lines: ExternalLines::default(),
             selector: None,
+            relocking: false,
         })
     }
     /// Reset strap values sampled from physical contacts at register +0.
@@ -202,7 +214,16 @@ impl Device for Gates {
             }
         }
         match self.offset(address, size) {
-            Some(offset) => self.words.get(&offset).copied().unwrap_or(0).into(),
+            Some(offset) => {
+                let word = self.words.get(&offset).copied().unwrap_or(0);
+                if offset == PLL_STATUS && std::mem::take(&mut self.relocking) {
+                    word.into()
+                } else if offset == PLL_STATUS && self.words.contains_key(&PLL_CONTROL) {
+                    (word | PLL_LOCKED).into()
+                } else {
+                    word.into()
+                }
+            }
             None => {
                 cx.unmodeled();
                 0
@@ -229,6 +250,7 @@ impl Device for Gates {
             }
         }
         self.words.insert(offset, value);
+        self.relocking |= offset == PLL_DIVIDERS;
         if offset == POLARITY {
             self.lines.set_polarity(cx, value);
         }
@@ -274,6 +296,7 @@ impl Gates {
             words: self.words.clone(),
             pulses: std::array::from_fn(|channel| self.sd[channel].count()),
             lines: self.lines.levels(),
+            relocking: self.relocking,
         }
     }
     fn check(&self, state: &State) -> Result<(), String> {
@@ -288,6 +311,7 @@ impl Gates {
         let polarity = state.words.get(&POLARITY).copied().unwrap_or(0);
         self.lines.restore(polarity, state.lines);
         self.words = state.words;
+        self.relocking = state.relocking;
         for (line, count) in self.sd.iter().zip(state.pulses) {
             line.set(count);
         }
@@ -350,5 +374,16 @@ mod tests {
         gates.restore(&saved).unwrap();
         assert_eq!(lines.levels(), 1 << 15);
         assert_eq!(read(&mut gates, &mut h, BASE + 0x08), 1 << 15);
+    }
+    #[test]
+    fn pll_status_reads_locked_after_the_control_word_is_written() {
+        let mut gates = Gates::new(BASE).unwrap();
+        let mut h = TestHost::default();
+        assert_eq!(read(&mut gates, &mut h, BASE + 0x120), 0);
+        write(&mut gates, &mut h, BASE + 0x118, 0x2000);
+        assert_eq!(read(&mut gates, &mut h, BASE + 0x120), 0x10000);
+        write(&mut gates, &mut h, BASE + 0x110, 1);
+        assert_eq!(read(&mut gates, &mut h, BASE + 0x120), 0);
+        assert_eq!(read(&mut gates, &mut h, BASE + 0x120), 0x10000);
     }
 }
