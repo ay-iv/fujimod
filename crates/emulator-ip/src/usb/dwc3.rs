@@ -601,8 +601,9 @@ impl Device for Dwc3 {
                     }
                     let old = self.reg(offset);
                     if value & RESET != 0 {
-                        if self.state.running || value & RUN != 0 || !self.state.pending.is_empty()
-                        {
+                        // A soft reset stops a running core (GFX 50R 3.11 0x186d894 sets it
+                        // with RUN still set); other queued work would be lost, so it refuses.
+                        if !self.state.pending.is_empty() {
                             return Err("Unsupported active DWC3 core reset".into());
                         }
                         self.queue(cx.now(), self.config.command_ticks, Operation::Reset)?;
