@@ -20,7 +20,11 @@ use fujimod_usb::{
 use futures_lite::future::block_on;
 use std::{
     num::NonZeroU32,
-    sync::mpsc::{self, SyncSender},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, SyncSender},
+        Arc,
+    },
     thread::{self, JoinHandle},
     time::Duration,
 };
@@ -145,9 +149,22 @@ struct Client<F> {
     limits: DebugMemoryLimits,
     mailbox_hint: Option<u32>,
     fenced: bool,
+    fatal: Arc<AtomicBool>,
     lease: Option<ReadLease>,
 }
 const READ_IDLE: Duration = Duration::from_millis(20);
+
+fn classify_open(error: fujimod_usb::Error) -> fujimod_usb::Error {
+    let text = error.to_string();
+    if text.contains("completion unknown") || text.contains("disconnected") {
+        fujimod_usb::Error::CompletionUnknown
+    } else if text.contains("in use by another session") {
+        fujimod_usb::Error::SessionAlreadyOpen
+    } else {
+        error
+    }
+}
+
 struct ReadLease {
     session: Session,
     mapping: Option<fujimod_workflows::bulk::BulkMapping>,
@@ -156,6 +173,10 @@ struct ReadLease {
     service_checked: bool,
 }
 impl<F: Sessions> Client<F> {
+    fn fence(&mut self) {
+        self.fenced = true;
+        self.fatal.store(true, Ordering::Relaxed);
+    }
     async fn release_lease(&mut self) -> fujimod_usb::Result<()> {
         let Some(mut lease) = self.lease.take() else {
             return Ok(());
@@ -169,7 +190,7 @@ impl<F: Sessions> Client<F> {
         }
         .await;
         if result.is_err() {
-            self.fenced = true;
+            self.fence();
         }
         result
     }
@@ -213,13 +234,17 @@ impl<F: Sessions> Client<F> {
                     lease.service_checked,
                 )
             } else {
-                (
-                    self.sessions.open().await?,
-                    None,
-                    std::time::Instant::now(),
-                    0,
-                    false,
-                )
+                let session = match self.sessions.open().await {
+                    Ok(session) => session,
+                    Err(error) => {
+                        let error = classify_open(error);
+                        if matches!(error, fujimod_usb::Error::CompletionUnknown) {
+                            self.fence();
+                        }
+                        return Err(error);
+                    }
+                };
+                (session, None, std::time::Instant::now(), 0, false)
             };
         let acquisition_seconds = acquisition.elapsed().as_secs_f64();
         let started = std::time::Instant::now();
@@ -402,7 +427,7 @@ impl<F: Sessions> Client<F> {
         }
         .await;
         if !cleanup_known || session.state() != SessionState::Ready {
-            self.fenced = true;
+            self.fence();
             return result.and(Err(Error::CompletionUnknown));
         }
         let retain = result.is_ok()
@@ -419,13 +444,13 @@ impl<F: Sessions> Client<F> {
             });
         } else {
             if let Err(error) = transport.restore(&mut session).await {
-                self.fenced = true;
+                self.fence();
                 return Err(error);
             }
             // Even a completed camera error yields its session. Unknown completion
             // above never sends cleanup, close, reclaim or another request.
             if let Err(error) = session.close().await {
-                self.fenced = true;
+                self.fence();
                 return Err(error);
             }
         }
@@ -449,6 +474,7 @@ pub struct UsbDevice {
     worker: Option<JoinHandle<()>>,
     flash_bytes: Option<u64>,
     has_card: bool,
+    fatal: Arc<AtomicBool>,
 }
 impl UsbDevice {
     /// Select descriptors and preflight one bounded transaction. Idle mounts
@@ -459,7 +485,7 @@ impl UsbDevice {
         device_id: Option<String>,
         limits: DebugMemoryLimits,
         flash_reader: Option<std::path::PathBuf>,
-    ) -> std::result::Result<(Self, Vec<Region>), String> {
+    ) -> std::result::Result<(Self, Vec<Region>), Box<dyn std::error::Error + Send + Sync>> {
         let catalog = ReferenceCatalog::bundled()?;
         let firmware = if firmware == "auto" {
             automatic_firmware(device_id.clone(), &catalog)?
@@ -502,6 +528,8 @@ impl UsbDevice {
             .collect();
         let (tx, rx) = mpsc::sync_channel::<Work>(32);
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+        let fatal = Arc::new(AtomicBool::new(false));
+        let worker_fatal = fatal.clone();
         let worker = thread::Builder::new()
             .name("camera-mount-usb".into())
             .spawn(move || {
@@ -510,7 +538,7 @@ impl UsbDevice {
                     let target = match target {
                         Ok(target) => target,
                         Err(error) => {
-                            let _ = ready_tx.send(Err(error));
+                            let _ = ready_tx.send(Err(error.into()));
                             return;
                         }
                     };
@@ -525,6 +553,7 @@ impl UsbDevice {
                         limits,
                         mailbox_hint: None,
                         fenced: false,
+                        fatal: worker_fatal,
                         lease: None,
                     };
                     let preflight = if has_card {
@@ -538,7 +567,7 @@ impl UsbDevice {
                         if !client.fenced {
                             let _ = client.transaction(Operation::Close).await;
                         }
-                        let _ = ready_tx.send(Err(error.to_string()));
+                        let _ = ready_tx.send(Err(error.into()));
                         return;
                     }
                     if ready_tx.send(Ok(())).is_err() {
@@ -590,6 +619,7 @@ impl UsbDevice {
                     worker: Some(worker),
                     flash_bytes,
                     has_card,
+                    fatal,
                 },
                 regions,
             )),
@@ -601,8 +631,11 @@ impl UsbDevice {
     }
     fn request(&self, op: Operation) -> Result<Answer> {
         let (tx, rx) = mpsc::channel();
-        self.queue.send((op, tx)).map_err(|_| libc::ENODEV)?;
-        rx.recv().map_err(|_| libc::ENODEV)?
+        self.queue.send((op, tx)).map_err(|_| libc::ENOTCONN)?;
+        rx.recv().map_err(|_| libc::ENOTCONN)?
+    }
+    pub fn fatal(&self) -> Arc<AtomicBool> {
+        self.fatal.clone()
     }
     fn card(&self, request: Request) -> Result<Response> {
         match self.request(Operation::Card(request))? {
@@ -627,7 +660,7 @@ impl UsbDevice {
 fn report(error: fujimod_usb::Error) -> i32 {
     eprintln!("fujimod-mount: {error}");
     match error {
-        fujimod_usb::Error::CompletionUnknown => libc::ENODEV,
+        fujimod_usb::Error::CompletionUnknown => libc::ENOTCONN,
         fujimod_usb::Error::SessionAlreadyOpen => libc::EBUSY,
         _ => libc::EIO,
     }

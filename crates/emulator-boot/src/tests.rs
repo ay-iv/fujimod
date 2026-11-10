@@ -266,12 +266,13 @@ fn settings_validate_marker_checksum_and_route_extent() {
 }
 
 #[test]
-fn selected_files_are_bounded_and_hash_checked() {
+fn selected_files_are_bounded_and_size_checked() {
     let path = std::env::temp_dir().join(format!("fujimod-boot-input-{}", std::process::id()));
     std::fs::write(&path, b"abc").unwrap();
     assert_eq!(checked(&path, &Content::identify(b"abc")).unwrap(), b"abc");
     assert!(read(&path, 2).is_err());
-    assert!(checked(&path, &Content::identify(b"abd")).is_err());
+    // Loading checks the declared byte count; the digest is a build/cache key.
+    assert_eq!(checked(&path, &Content::identify(b"abd")).unwrap(), b"abc");
     std::fs::remove_file(path).unwrap();
 }
 
@@ -504,7 +505,7 @@ fn shipped_preparation_opens_the_same_board_as_selected_files() {
             session.board.instruction_counts(),
             session.board.now(),
             Content::identify(&kernel).sha256,
-            session.board.fingerprint().unwrap(),
+            session.board.complete_state().unwrap(),
         )
     };
 
@@ -519,6 +520,8 @@ fn shipped_preparation_opens_the_same_board_as_selected_files() {
             clock_seconds_2000: None,
             preferred_languages: vec![],
             camera: Some(reference_camera()),
+            access_point: None,
+            capability_reply: None,
         })
         .unwrap(),
     );
@@ -538,6 +541,53 @@ fn shipped_preparation_opens_the_same_board_as_selected_files() {
     };
     let shipped = snapshot(open_prepared(restored, inputs).unwrap());
     assert_eq!(shipped, direct);
+}
+
+#[test]
+fn restart_payload_reconstructs_the_rom_board_after_wake() {
+    use fujimod_emulator_cpu::arm;
+    let (Some(update), Some(boot_rom), Some(payload)) = (
+        std::env::var_os("FUJIMOD_TEST_UPDATE"),
+        std::env::var_os("FUJIMOD_TEST_BOOT_ROM"),
+        std::env::var_os("FUJIMOD_TEST_RESTART_IMAGE"),
+    ) else { return };
+    let mut session = open(Options {
+        configuration_id: "x70-110-rec".into(), overlays: vec![],
+        update: update.into(), boot_rom: boot_rom.into(), nand: None, settings: None,
+        clock_seconds_2000: None, preferred_languages: vec![], camera: Some(reference_camera()),
+        access_point: None, capability_reply: None,
+    }).unwrap();
+    session.run_with_limits(5_000_000, 1000, None, None).unwrap();
+    session.logic_input("usb_cable", true).unwrap();
+    let image = std::fs::read(payload).unwrap();
+    session.board.write_physical(0x20000, &image).unwrap();
+    session.board.write_physical(0x22000, &0xe320f003u32.to_le_bytes()).unwrap();
+    session.board.write_register(1, arm::CORE[15], 0x22000).unwrap();
+    let entry = std::env::var("FUJIMOD_TEST_RESTART_ENTRY").unwrap().parse::<u64>().unwrap();
+    session.board.write_register(0, arm::CORE[15], entry).unwrap();
+    session.board.write_register(0, arm::CORE[13], 0x2e000).unwrap();
+    session.run_with_limits(20_000, 1000, None, None).unwrap();
+    let alarm = session.resources.clock("clocks").unwrap().power_alarm().unwrap().unwrap();
+    let due = alarm.lock().unwrap().next_deadline().unwrap();
+    session.run_window(u64::MAX, 1000, None, Some(due)).unwrap();
+    assert!(session.board.is_powered_off());
+    let wake = alarm.lock().unwrap().next_deadline().unwrap();
+    let counts = session.board.instruction_counts();
+    session.run_window(u64::MAX, 1000, None, Some(wake)).unwrap();
+    assert_eq!(session.board.instruction_counts(), counts);
+    assert!(session.board.epoch_is_unexecuted());
+    assert!(session.resources.logic_level("usb_cable").unwrap().high());
+    assert_eq!(session.board.read_register(0, arm::CORE[15]).unwrap(), 0);
+    let packet = session.resources.clock("clocks").unwrap().power_alarm().unwrap().unwrap()
+        .lock().unwrap().packet().unwrap();
+    assert_eq!(&packet[..4], &[1, 0, 0, 0]);
+    assert_eq!(packet[13], 0);
+    assert_eq!(packet.iter().fold(0u8, |sum, byte| sum.wrapping_add(*byte)), 0);
+    let mut memory = vec![0; image.len()];
+    session.board.read_physical(0x20000, &mut memory).unwrap();
+    assert_ne!(memory, image);
+    session.run_with_limits(1000, 100, None, None).unwrap();
+    assert!(!session.board.epoch_is_unexecuted());
 }
 
 #[test]
@@ -777,7 +827,7 @@ fn serial_spi1_refuses_a_shift_with_both_chip_selects_low() {
     let shift = |panel_high: bool, configuration: u64, word: u64| {
         let mut document = spec.devices_value.clone();
         document["nodes"].as_array_mut().unwrap().retain(|n| {
-            ["irq0", "irq1", "serial_gpio", "serial_spi1"].contains(&n["name"].as_str().unwrap())
+            ["irq0", "irq1", "clocks", "serial_gpio", "serial_spi1"].contains(&n["name"].as_str().unwrap())
         });
         fujimod_emulator_exr2_board::register_board_builder();
         fujimod_emulator_models::register();

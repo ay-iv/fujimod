@@ -137,6 +137,12 @@ impl Device for Dma {
     fn fingerprint(&self) -> Result<Value, String> {
         Ok(self.save())
     }
+    fn checkpoint(&self) -> Result<fujimod_emulator_devices::checkpoint::Checkpoint, String> {
+        fujimod_emulator_devices::checkpoint::Checkpoint::encode(
+            "test-physical-dma",
+            &*self.reads.lock().unwrap(),
+        )
+    }
 
     fn name(&self) -> &'static str {
         "test-physical-dma"
@@ -185,6 +191,7 @@ fn board(released: Vec<bool>) -> (Board, Readings) {
                         },
                         btcm: Default::default(),
                     },
+                    ..Default::default()
                 }),
                 registers: vec![(Register::Pc, 0x30000), (Register::Pstate, 0xd3)],
             })
@@ -403,10 +410,15 @@ fn continuation_store_dma_and_publication_stops_preserve_execution() {
         (
             board.instruction_counts(),
             board.state()["timeline"]["now"].clone(),
-            board.fingerprint().unwrap(),
+            board.complete_state().unwrap(),
         )
     };
-    assert_eq!(run(false), run(true));
+    let unwatched = run(false);
+    let watched = run(true);
+    if let Some(message) = unwatched.2.diff(&watched.2) {
+        panic!("{message}");
+    }
+    assert_eq!(unwatched, watched);
 }
 
 #[test]

@@ -142,6 +142,7 @@ fn build_processor(
                     btcm: bank(state.btcm)?,
                     atcm: bank(state.atcm)?,
                 },
+                ..Default::default()
             })
         })
         .transpose()?;
@@ -881,7 +882,11 @@ mod tests {
             physical_controls: None,
             control_ids: None,
             first_start: None,
+            ui_scene_names: None,
+            ui_setting_names: None,
+            ui_event_codes: None,
             bulk: None,
+            execution: None,
             restart: None,
             card_files: None,
             settings: None,
@@ -946,7 +951,7 @@ mod tests {
         };
         for (body, firmware, drain, limit) in [
             ("x100vi", "x100vi-131", 0x6800_0000u64, 0x6800_0000u64),
-            ("xt5", "xt5-431", 0x6000_0000, 0x4000_0000),
+            ("xt5", "xt5-431", 0x6000_0000, 0x6000_0000),
         ] {
             let selection = fujimod_catalog::ReferenceCatalog::bundled()
                 .unwrap()

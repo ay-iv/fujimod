@@ -349,6 +349,27 @@ pub struct ControllerModels {
     pub window_analysis: Option<WindowAnalysis>,
 }
 
+/// Raw ADC codes for one encoder phase channel.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct EncoderLevels {
+    pub low: u16,
+    pub high: u16,
+}
+
+/// Physical encoder output levels; channel order is high phase bit, low phase bit.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum EncoderOutputs {
+    Gpio,
+    Adc {
+        channels: [usize; 2],
+        levels: [EncoderLevels; 2],
+    },
+}
+
 /// Declared encoders options facts.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -358,7 +379,11 @@ pub struct EncoderTiming {
     /// Declared phase ticks.
     pub phase_ticks: u64,
     /// Declared pins.
-    pub pins: Vec<Pin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pins: Option<Vec<Pin>>,
+    /// Explicit output choice; absent means GPIO for existing bodies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outputs: Option<EncoderOutputs>,
     /// Declared rest phase.
     pub rest_phase: u64,
 }
@@ -372,6 +397,9 @@ pub struct Encoder {
     /// Declared counter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub counter: Option<String>,
+    /// ADC connection for an analog encoder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adc: Option<String>,
     /// Declared name.
     pub name: String,
     /// Declared options.
@@ -1581,6 +1609,24 @@ pub struct JpegCodec {
     pub size: u64,
 }
 
+/// X-Processor Pro movie H.264 encoder.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", schemars(rename = "HardwareH264Encoder"))]
+pub struct H264Encoder {
+    /// Declared base.
+    pub base: u64,
+    /// Declared basis.
+    pub basis: String,
+    /// Interrupt line of the completion status.
+    pub irq_route: u32,
+    /// Time from a start to the completion of its run, in device ticks.
+    pub run_ticks: u64,
+    /// Declared size.
+    pub size: u64,
+}
+
 /// Declared input buffer facts.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -1928,6 +1974,9 @@ pub struct RegisterLayouts {
     /// Declared X-Processor Pro JPEG decoder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jpeg_decoder: Option<JpegCodec>,
+    /// Declared X-Processor Pro movie H.264 encoder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub h264_encoder: Option<H264Encoder>,
     /// Declared HDMI transmitter without a sink.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hdmi_tx: Option<HdmiTransmitter>,
@@ -2124,6 +2173,12 @@ pub struct BlockParameters {
     /// Declared companion irq base.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub companion_irq_base: Option<u64>,
+    /// Declared virtual time from an I2C byte command to its completion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub byte_ns: Option<u64>,
+    /// Declared interrupt line of the block.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interrupt: Option<u32>,
     /// Declared receive request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receive_request: Option<u64>,

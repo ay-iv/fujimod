@@ -113,6 +113,10 @@ pub trait Host {
     fn request_pause(&mut self) -> Result<(), String> {
         Err("host cannot pause guest execution for asynchronous work".into())
     }
+    /// Stop the powered processors because the board's supply was released.
+    fn power_off(&mut self) -> Result<(), String> {
+        Err("host cannot model supply removal".into())
+    }
     /// Worker count for pure host computation. Zero selects the exact serial
     /// path; workers never receive guest state or publish device effects.
     fn compute_workers(&self) -> usize {
@@ -187,6 +191,10 @@ impl<'a> Cx<'a> {
     }
     pub fn request_pause(&mut self) -> Result<(), String> {
         self.host.request_pause()
+    }
+    /// Signal that the connected board supply has actually turned off.
+    pub fn power_off(&mut self) -> Result<(), String> {
+        self.host.power_off()
     }
     /// Bounded strategy for pure, deterministic raster work. The owner still
     /// applies every resulting device effect on this context's thread.
@@ -283,11 +291,28 @@ impl<'a> Cx<'a> {
 /// A register-level device behind one or more address windows.
 pub trait Device: Send + std::any::Any {
     fn name(&self) -> &'static str;
+    /// Host publication stamp, advanced only when `save()` would change.
+    /// Devices without a stamp retain the serialized publication comparison.
+    fn publication_generation(&self) -> Option<u64> {
+        None
+    }
+    /// Frame count for a display timing output, when provided by this device.
+    fn display_frame_count(&self, _output: usize) -> Result<u64, String> {
+        Err("device does not provide display frame counts".into())
+    }
     // Capabilities the model offers sessions (`crate::capability`).
     fn analog_inputs(&self) -> Option<&(dyn crate::capability::AnalogInputs + 'static)> {
         None
     }
     fn analog_inputs_mut(&mut self) -> Option<&mut (dyn crate::capability::AnalogInputs + 'static)> {
+        None
+    }
+    fn gravity_input(&self) -> Option<&(dyn crate::capability::GravityInput + 'static)> {
+        None
+    }
+    fn gravity_input_mut(
+        &mut self,
+    ) -> Option<&mut (dyn crate::capability::GravityInput + 'static)> {
         None
     }
     fn serial_status(&self) -> Option<&(dyn crate::capability::SerialStatus + 'static)> {

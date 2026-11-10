@@ -300,7 +300,7 @@ enum Command {
         until: u64,
     },
     State,
-    MemoryFingerprint,
+    MemoryState,
     Progress,
     InstructionPoints { core: usize, addresses: Vec<u64> },
     InstructionEvent { core: usize },
@@ -488,11 +488,27 @@ impl Worker {
                         pins: c.pins(),
                         channel: mailbox::Channel::default(),
                     }),
-                    storage: storage_image
-                        .map(|s| {
-                            Ok::<_, String>(Arc::new(Mutex::new(flash_storage::Storage::new(s)?)))
-                        })
-                        .transpose()?,
+                    storage: {
+                        // The flash-storage window's `medium` option selects
+                        // the backing device enum, matching definition.rs.
+                        let medium = fujimod_emulator_xp5_board::definition::storage_medium(
+                            &windows,
+                        );
+                        storage_image
+                            .map(|s| match medium.as_str() {
+                                "nor" => flash_storage::Storage::new(s).map(|st| {
+                                    flash_storage::Medium::Nor(Arc::new(Mutex::new(st)))
+                                }),
+                                "serial-nand" => {
+                                    fujimod_emulator_xp5_storage::nand_storage::NandStorage::new(s)
+                                        .map(|st| {
+                                            flash_storage::Medium::Nand(Arc::new(Mutex::new(st)))
+                                        })
+                                }
+                                other => Err(format!("unknown flash storage medium {other}")),
+                            })
+                            .transpose()?
+                    },
                     displays: displays
                         .into_iter()
                         .map(Scanout::config)
@@ -507,7 +523,7 @@ impl Worker {
                         Ok(())
                     }
                 })?;
-                if !resources.sd.is_empty() { return Err("unused SD media configuration".into()); }
+                xp5_board::sd::require_hosts(&resources.sd)?;
                 if !resources.displays.is_empty() {
                     return Err("unused scanout configuration".into());
                 }
@@ -652,7 +668,7 @@ impl Worker {
                 points.event().map(|address| json!({"core":core,"address":address}))
             }).unwrap_or(Value::Null)),
             Command::State => Ok(self.state()),
-            Command::MemoryFingerprint => self.board.memory_fingerprint(),
+            Command::MemoryState => self.board.memory_state(),
             Command::ReadMemory {
                 core,
                 address,

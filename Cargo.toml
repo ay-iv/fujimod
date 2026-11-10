@@ -8,14 +8,18 @@ members = [
   "crates/corpus",
   "crates/virtual-scene",
   "crates/recording",
+  "crates/release-manifest",
   "crates/remote",
   "crates/firmware",
   "crates/recovery",
   "crates/runtime-install",
   "crates/usb-proxy",
+  "crates/sync-protocol",
   "crates/catalog",
   "crates/catalog-bulk",
   "crates/catalog-card",
+  "crates/catalog-execution",
+  "crates/catalog-memory-reservations",
   "crates/catalog-restart",
   "crates/catalog-workflows",
   "crates/catalog-firmware-identity",
@@ -32,6 +36,7 @@ members = [
   "crates/catalog-settings",
   "crates/crate-graph",
   "crates/emulator",
+  "crates/perf",
   "crates/emulator-boot",
   "crates/emulator-session",
   "crates/emulator-cli",
@@ -134,11 +139,15 @@ fujimod-framebuffer-xpp = { path = "crates/framebuffer-xpp", version = "0.1.0" }
 fujimod-framebuffer-exr2 = { path = "crates/framebuffer-exr2", version = "0.1.0" }
 fujimod-framebuffer = { path = "crates/framebuffer", version = "0.1.0" }
 fujimod-remote = { path = "crates/remote", version = "0.1.0" }
+fujimod-sync-protocol = { path = "crates/sync-protocol", version = "0.1.0" }
 fujimod-recording = { path = "crates/recording", version = "0.1.0" }
+fujimod-release-manifest = { path = "crates/release-manifest", version = "0.1.0" }
 fujimod-catalog = { path = "crates/catalog", version = "0.1.0" }
 fujimod-catalog-bulk = { path = "crates/catalog-bulk", version = "0.1.0" }
 fujimod-catalog-restart = { path = "crates/catalog-restart", version = "0.1.0" }
+fujimod-catalog-memory-reservations = { path = "crates/catalog-memory-reservations", version = "0.1.0" }
 fujimod-catalog-card = { path = "crates/catalog-card", version = "0.1.0" }
+fujimod-catalog-execution = { path = "crates/catalog-execution", version = "0.1.0" }
 fujimod-catalog-workflows = { path = "crates/catalog-workflows", version = "0.1.0" }
 fujimod-catalog-firmware-identity = { path = "crates/catalog-firmware-identity", version = "0.1.0" }
 fujimod-catalog-configuration = { path = "crates/catalog-configuration", version = "0.1.0" }
@@ -153,6 +162,7 @@ fujimod-catalog-schemas = { path = "crates/catalog-schemas", version = "0.1.0" }
 fujimod-catalog-service = { path = "crates/catalog-service", version = "0.1.0" }
 fujimod-catalog-settings = { path = "crates/catalog-settings", version = "0.1.0" }
 fujimod-emulator = { path = "crates/emulator", version = "0.1.0" }
+fujimod-perf = { path = "crates/perf", version = "0.1.0" }
 fujimod-emulator-boot = { path = "crates/emulator-boot", version = "0.1.0" }
 fujimod-emulator-session = { path = "crates/emulator-session", version = "0.1.0" }
 fujimod-emulator-devices = { path = "crates/emulator-devices", version = "0.1.0" }
@@ -216,6 +226,7 @@ serde = "1"
 serde_json = "1"
 schemars = "1.2.3"
 ciborium = "0.2"
+smoltcp = { version = "0.12", default-features = false, features = ["std", "medium-ethernet", "proto-ipv4", "proto-dhcpv4", "proto-dns", "socket-udp"] }
 fujimod-usb = { path = "crates/usb", version = "0.1.0" }
 fujimod-usb-app80 = { path = "crates/usb-app80", version = "0.1.0" }
 fujimod-usb-app80-types = { path = "crates/usb-app80-types", version = "0.1.0" }

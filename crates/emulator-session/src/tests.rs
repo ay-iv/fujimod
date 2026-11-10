@@ -1,5 +1,6 @@
 use super::*;
 mod portable;
+mod ram_option;
 use fujimod_emulator::board::{
     bus::{Bus, Mode},
     factory,
@@ -9,6 +10,12 @@ use fujimod_emulator_ip::sdhci::host::{self as sdhc, SdHost};
 use fujimod_emulator_storage::fat;
 
 fn card_session() -> Session {
+    card_session_with_epoch(None)
+}
+fn card_session_with_epoch(epoch: Option<(u64, Vec<u64>)>) -> Session {
+    card_session_with_power(epoch, None)
+}
+fn card_session_with_power(epoch: Option<(u64, Vec<u64>)>, power: Option<std::sync::Arc<std::sync::Mutex<fujimod_emulator_devices::exr2::wake_alarm::WakeAlarm>>>) -> Session {
     let contacts = fujimod_emulator_devices::parts::card_contacts::Contacts::new(true, false);
     let card = fat::format(
         &format(),
@@ -57,6 +64,15 @@ fn card_session() -> Session {
     let pads = gpio.pads();
     let gpio_id = bus.register(0xfff89000, 0x480, Box::new(gpio)).unwrap();
     let mut resources = Resources::default();
+    resources.wires.insert("usb_cable".into(), fujimod_emulator_exr2_resources::Wire::logic_level(false));
+    resources.users.insert("usb_cable".into(), Default::default());
+    if let Some(power) = power {
+        use fujimod_emulator_devices::exr2::clock;
+        let clocks = clock::Clocks::new(clock::Options { output_settle_ticks: 2, reset_ready: true }, ()).unwrap();
+        clocks.output().attach_power(power).unwrap();
+        resources.clocks.insert("clocks".into(), clocks.output());
+        bus.register(clock::BASE, 0x100, Box::new(clocks)).unwrap();
+    }
     resources.card_pins.insert(
         "sd".into(),
         CardPins {
@@ -68,19 +84,22 @@ fn card_session() -> Session {
             protected_high: true,
         },
     );
-    let graph:factory::Graph=serde_json::from_value(serde_json::json!({
+    let mut graph:factory::Graph=serde_json::from_value(serde_json::json!({
         "processors":[{"model":"cortex-r5f","registers":[],"released":true,"mprofile":null,"rprofile":{"cp14_identity":21930,"tcm":{"btcm":{"bytes":4096,"reset":1879048193},"atcm":{"bytes":8192,"reset":4294934529u32}}}}],
         "ram":[{"base":0,"size":4096}],"dma_mappings":[{"address":0,"physical":0,"size":4096,"permissions":3}],
         "mappings":[{"core":0,"address":0,"physical":0,"size":4096,"permissions":7}],
         "peripherals":[],"decoders":[],"instructions_per_tick":[24,1]
     })).unwrap();
+    if resources.clocks.contains_key("clocks") {
+        graph.peripherals.push(factory::Peripheral { core: 0, address: 0xfff88000, physical: 0xfff88000, size: 0x100 });
+    }
+    let mut options = factory::Options::new(factory::Engine::Unicorn)
+        .with_translation_cache_size_bytes(1 << 20);
+    if let Some((tick, counts)) = epoch {
+        options = options.with_epoch(tick, counts);
+    }
     let board = graph
-        .build(
-            factory::Options::new(factory::Engine::Unicorn)
-                .with_translation_cache_size_bytes(1 << 20),
-            bus,
-            None,
-        )
+        .build(options, bus, None)
         .unwrap();
     Session {
         definition: serde_json::json!({"fixture":"card-session"}),
@@ -90,6 +109,7 @@ fn card_session() -> Session {
         resources,
         nodes: BTreeMap::from([("sd".into(), id), ("adc".into(), adc)]),
         contacts: BTreeMap::from([("sd".into(), contacts)]),
+        power_cycle: None,
         recording_frames: Default::default(),
     }
 }
@@ -204,7 +224,7 @@ fn scene_rgb_prepares_only_the_next_sensor_exposure() {
             },
         )
         .unwrap();
-    let straight = session.fingerprint().unwrap();
+    let straight = session.complete_state().unwrap();
     let log = fujimod_emulator_devices::checkpoint::Checkpoint::encode(
         "scene-input-log",
         &history.entries(),
@@ -213,7 +233,7 @@ fn scene_rgb_prepares_only_the_next_sensor_exposure() {
     let replay: Vec<super::history::Entry> = log.decode("scene-input-log").unwrap();
     session.restore(&saved).unwrap();
     super::history::History::replay(&mut session, &replay).unwrap();
-    assert_eq!(session.fingerprint().unwrap(), straight);
+    assert_eq!(session.complete_state().unwrap(), straight);
     assert!(session.sensor_rgb("sensor", 1, 1, &[7], 10000.).is_err());
     assert!(
         session
@@ -366,7 +386,7 @@ fn session_keyframe_and_input_replay_preserve_card_adc_and_fractional_cpu_bounda
             },
         )
         .unwrap();
-    let straight = session.fingerprint().unwrap();
+    let straight = session.complete_state().unwrap();
     let encoded = fujimod_emulator_devices::checkpoint::Checkpoint::encode(
         "input-log",
         &&history.entries()[cursor..],
@@ -378,7 +398,7 @@ fn session_keyframe_and_input_replay_preserve_card_adc_and_fractional_cpu_bounda
     assert!(session.card_state("sd").unwrap().present);
     assert_eq!(session.adc_samples("adc").unwrap(), vec![837; 12]);
     History::replay(&mut session, &replay).unwrap();
-    assert_eq!(session.fingerprint().unwrap(), straight);
+    assert_eq!(session.complete_state().unwrap(), straight);
     history.undo(&mut session).unwrap();
     assert_eq!(session.board.instruction_counts(), [13]);
     assert_eq!(session.board.read_register(0, arm::CORE[0]).unwrap(), 7);
@@ -397,7 +417,7 @@ fn session_keyframe_and_input_replay_preserve_card_adc_and_fractional_cpu_bounda
         .unwrap();
     history.rollback(&mut session, 3).unwrap();
     assert_eq!(session.board.now(), 3);
-    let rolled = session.fingerprint().unwrap();
+    let rolled = session.complete_state().unwrap();
     // Repeat the same target directly from the retained earlier state.
     session.restore(&before).unwrap();
     assert_eq!(Boundary::capture(&session), rollback_start);
@@ -405,7 +425,7 @@ fn session_keyframe_and_input_replay_preserve_card_adc_and_fractional_cpu_bounda
         .board
         .run_with_limits(240, 17, None, Some(3))
         .unwrap();
-    assert_eq!(session.fingerprint().unwrap(), rolled);
+    assert_eq!(session.complete_state().unwrap(), rolled);
 }
 
 #[test]
@@ -480,7 +500,7 @@ fn history_rollback_bounds_interactive_run_and_keeps_exact_keyframe_restore() {
             .write_physical(0, &[0xfe, 0xff, 0xff, 0xea])
             .unwrap();
 
-        let initial = session.fingerprint().unwrap();
+        let initial = session.complete_state().unwrap();
         let initial_boundary = Boundary::capture(&session);
         let mut history = History::new(2, usize::MAX).unwrap();
         history.mark(&session).unwrap();
@@ -510,7 +530,7 @@ fn history_rollback_bounds_interactive_run_and_keeps_exact_keyframe_restore() {
         assert!(matches!(&replayed.input, Input::Run { until: Some(3), .. }));
 
         history.undo(&mut session).unwrap();
-        assert_eq!(session.fingerprint().unwrap(), initial);
+        assert_eq!(session.complete_state().unwrap(), initial);
         assert_eq!(Boundary::capture(&session), initial_boundary);
     }
 }
@@ -715,10 +735,10 @@ fn automatic_history_coalesces_interactive_inputs_and_keeps_exact_boundaries() {
             assert_eq!(captured.len(), 3);
             assert_eq!(history.entries().len(), 40);
             let entries = history.entries().to_vec();
-            let final_state = session.fingerprint().unwrap();
+            let final_state = session.complete_state().unwrap();
             assert_eq!(history.undo(&mut session).unwrap(), captured[2]);
             History::replay(&mut session, &entries[32..]).unwrap();
-            assert_eq!(session.fingerprint().unwrap(), final_state);
+            assert_eq!(session.complete_state().unwrap(), final_state);
             // An explicit mark remains immediate even inside an automatic group.
             let explicit = Boundary::capture(&session);
             history.mark(&session).unwrap();
@@ -862,8 +882,11 @@ fn raf_history_and_replay_share_the_installed_frame_and_checkpoint_counts() {
     else {
         panic!("RAF input");
     };
-    assert!(Arc::ptr_eq(&retained.frame.clone().downcast::<Frame>().unwrap(), &frame));
-    let straight = session.fingerprint().unwrap();
+    assert!(Arc::ptr_eq(
+        &retained.frame.clone().downcast::<Frame>().unwrap(),
+        &frame
+    ));
+    let straight = session.complete_state().unwrap();
     let encoded =
         fujimod_emulator_devices::checkpoint::Checkpoint::encode("raf-history", &history.entries())
             .unwrap();
@@ -878,7 +901,7 @@ fn raf_history_and_replay_share_the_installed_frame_and_checkpoint_counts() {
     };
     let replayed = replayed.frame.clone().downcast::<Frame>().unwrap();
     assert!(Arc::ptr_eq(&input.lock().unwrap().current, &replayed));
-    assert_eq!(session.fingerprint().unwrap(), straight);
+    assert_eq!(session.complete_state().unwrap(), straight);
     let current = session.checkpoint(None).unwrap();
     session.restore(&saved).unwrap();
     session.restore(&current).unwrap();

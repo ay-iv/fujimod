@@ -151,6 +151,11 @@ pub struct SettingsProfile {
     /// Stock header defaults. Byte 14 is the marker `0xaa`; byte 15 holds the
     /// checksum that makes the sixteen bytes sum to zero.
     pub header: UpdateRange,
+    /// X-Processor 4 only: the header's offset in the boot loader's handoff
+    /// block. Absent for X-Processor Pro, whose header goes to sub-CPU
+    /// registers.
+    #[serde(default)]
+    pub loader_offset: Option<u64>,
     /// Journal records the stock loader requires, by name.
     pub records: BTreeMap<String, ProfileRecord>,
     /// Fields initialized from the calibration bank or a declared fill.
@@ -234,7 +239,7 @@ pub struct ConfigurationWindow {
     pub flash_offset: u64,
     /// Window length in bytes.
     pub bytes: u64,
-    /// Lowercase hexadecimal SHA-256 of the window.
+    /// Build/cache identity of the window; unused when loading settings.
     pub sha256: String,
     /// The stock copy that fills the configuration store from this window.
     pub basis: String,
@@ -283,7 +288,7 @@ pub struct SettingsSource {
     pub address: u64,
     /// Decoded length in bytes.
     pub size: u64,
-    /// Lowercase hexadecimal SHA-256 of the decoded section.
+    /// Build/cache identity of the decoded section; unused when loading settings.
     pub sha256: String,
 }
 
@@ -310,7 +315,7 @@ pub struct SettingsBank {
     pub bytes: u64,
 }
 
-/// Bytes at a firmware address in the decoded update, identified by SHA-256.
+/// A bounded range at a firmware address in the decoded update.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -323,7 +328,7 @@ pub struct UpdateRange {
     pub address: u64,
     /// Length in bytes.
     pub size: u64,
-    /// Lowercase hexadecimal SHA-256 of the stock bytes.
+    /// Build/cache identity of the stock bytes; unused when loading settings.
     pub sha256: String,
 }
 
@@ -382,7 +387,6 @@ impl FirmwareSettings {
                 if window.bytes == 0
                     || window.flash_offset.checked_add(window.bytes).is_none()
                     || window.basis.is_empty()
-                    || !hex_digest(&window.sha256)
                     || self.defaults.is_some()
                     || !self.fields.is_empty()
                     || !self.sections.is_empty()
@@ -395,6 +399,9 @@ impl FirmwareSettings {
                 }
                 window.bytes
             }
+            // X-Processor 4 RAM journal profile: no flash bank, no configuration
+            // window. The header and journal records live in CPU-virtual RAM.
+            (None, None) => 0,
             _ => return fail("settings need exactly one bank or configuration window"),
         };
         let source_end = self.source.address.checked_add(self.source.size);
@@ -420,10 +427,7 @@ impl FirmwareSettings {
             {
                 return fail("stock range outside the source section");
             }
-            if range.size == 0
-                || range.address.checked_add(range.size).is_none()
-                || !hex_digest(&range.sha256)
-            {
+            if range.size == 0 || range.address.checked_add(range.size).is_none() {
                 return fail("invalid update range");
             }
         }
@@ -437,6 +441,13 @@ impl FirmwareSettings {
         // Store extents, each with the offsets its fields and settings occupy.
         let mut stores: BTreeMap<&str, (u64, BTreeSet<u64>)> = BTreeMap::new();
         stores.insert("bank", (bank_bytes, BTreeSet::new()));
+        if self.bank.is_none() && self.configuration.is_none() {
+            // X-Processor 4: the RAM configuration store the stock initializer
+            // zero-fills (0x480000 bytes) and repopulates from the defaults
+            // table. A profile layout names it for configuration-byte settings
+            // such as the debug gate; the profile builder does not place it.
+            stores.insert("ram", (0x48_0000, BTreeSet::new()));
+        }
         if let Some(profile) = profile {
             if profile.header.size != 16 {
                 return fail("profile header is not sixteen bytes");
@@ -558,14 +569,6 @@ impl FirmwareSettings {
         }
         Ok(())
     }
-}
-
-/// A lowercase hexadecimal SHA-256.
-fn hex_digest(digest: &str) -> bool {
-    digest.len() == 64
-        && digest
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 #[cfg(test)]

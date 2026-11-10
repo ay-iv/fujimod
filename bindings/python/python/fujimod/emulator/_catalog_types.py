@@ -16,6 +16,14 @@ class AdcConditionVariant1(TypedDict, total=False):
     kind: Required[Literal["self_active"]]
 
 
+class AdcEncoderCalibration(TypedDict, total=False):
+    centers: Required[list[int]]
+    direction: Required[int]
+    edges_per_step: Required[int]
+    hysteresis: Required[int]
+    offset: Required[int]
+
+
 type AdcInterval = AdcIntervalVariant0 | AdcIntervalVariant1
 
 
@@ -33,6 +41,11 @@ class AdcIntervalVariant1(TypedDict, total=False):
     unless: NotRequired[list[AdcInterval]]
     upper: Required[int]
     when: NotRequired[AdcCondition | None]
+
+
+class AdcTerm(TypedDict, total=False):
+    connection_id: Required[str]
+    interval: Required[AdcInterval]
 
 
 class AdditionalUiModes(TypedDict, total=False):
@@ -475,6 +488,13 @@ class CacheGeometry(TypedDict, total=False):
     l2_bytes: Required[int]
 
 
+class CacheSynchronization(TypedDict, total=False):
+    data_barrier: Required[int]
+    data_clean: Required[int]
+    instruction_barrier: Required[int]
+    instruction_invalidate: Required[int]
+
+
 class CaptureScope(TypedDict, total=False):
     basis: Required[str]
     name: Required[str]
@@ -518,6 +538,9 @@ class CompanionMailbox(TypedDict, total=False):
     status: Required[int]
 
 
+type Configuration = ConfigurationVariant0 | ConfigurationVariant1
+
+
 class ConfigurationCheck(TypedDict, total=False):
     offset: Required[int]
     value: Required[int]
@@ -536,6 +559,16 @@ class ConfigurationLocationVariant0(TypedDict, total=False):
 class ConfigurationLocationVariant1(TypedDict, total=False):
     address: Required[int]
     kind: Required[Literal["direct"]]
+
+
+class ConfigurationVariant0(TypedDict, total=False):
+    address: Required[int]
+    mechanism: Required[Literal["pointer"]]
+
+
+class ConfigurationVariant1(TypedDict, total=False):
+    address: Required[int]
+    mechanism: Required[Literal["fixed"]]
 
 
 class ConfigurationWindow(TypedDict, total=False):
@@ -979,8 +1012,9 @@ class ConstructionModelVariant8(TypedDict, total=False):
 
 
 class ConstructionModelVariant9(TypedDict, total=False):
+    adc: NotRequired[str | None]
     counter: NotRequired[str | None]
-    gpio: Required[str]
+    gpio: NotRequired[str | None]
     kind: Required[Literal["encoder"]]
 
 
@@ -1387,6 +1421,16 @@ class DecoderSelection(TypedDict, total=False):
     processors: Required[list[str]]
 
 
+class DeferredTimer(TypedDict, total=False):
+    callback_arguments: Required[int]
+    cancel: Required[TimerRoutine]
+    kind: Required[str]
+    one_shot_periodic: Required[int]
+    period_unit: Required[str]
+    periodic_nonzero: Required[bool]
+    start: Required[TimerRoutine]
+
+
 class DeviceGraph(TypedDict, total=False):
     attachment_order: Required[list[str]]
     construction_order: Required[list[str]]
@@ -1491,10 +1535,21 @@ type ElectricalInput = (
     | ElectricalInputVariant2
     | ElectricalInputVariant3
     | ElectricalInputVariant4
+    | ElectricalInputVariant5
+    | ElectricalInputVariant6
+    | ElectricalInputVariant7
+    | ElectricalInputVariant8
 )
 
 
 class ElectricalInputVariant0(TypedDict, total=False):
+    callback: Required[int]
+    expected_result: Required[int]
+    kind: Required[Literal["adc_conjunction"]]
+    terms: Required[list[AdcTerm]]
+
+
+class ElectricalInputVariant1(TypedDict, total=False):
     callback: NotRequired[int | None]
     connection_id: Required[str]
     expected_result: NotRequired[int | None]
@@ -1502,14 +1557,21 @@ class ElectricalInputVariant0(TypedDict, total=False):
     kind: Required[Literal["adc"]]
 
 
-class ElectricalInputVariant1(TypedDict, total=False):
+class ElectricalInputVariant2(TypedDict, total=False):
     connection_id: Required[str]
     expected_level: Required[bool]
     kind: Required[Literal["gpio"]]
     scanner: Required[GpioScanner]
 
 
-class ElectricalInputVariant2(TypedDict, total=False):
+class ElectricalInputVariant3(TypedDict, total=False):
+    callback: Required[int]
+    connection_id: Required[str]
+    expected_levels: Required[list[bool]]
+    kind: Required[Literal["gpio_contacts"]]
+
+
+class ElectricalInputVariant4(TypedDict, total=False):
     connection_id: Required[str]
     decoder_event: Required[int]
     guard: Required[int]
@@ -1520,13 +1582,32 @@ class ElectricalInputVariant2(TypedDict, total=False):
     transitions: Required[list[int]]
 
 
-class ElectricalInputVariant3(TypedDict, total=False):
+class ElectricalInputVariant5(TypedDict, total=False):
+    connection_id: Required[str]
+    decoder_event: Required[int]
+    guard: Required[int]
+    kind: Required[Literal["gpio_transition"]]
+    phase_map: Required[list[int]]
+    threshold: Required[int]
+    transitions: Required[list[int]]
+
+
+class ElectricalInputVariant6(TypedDict, total=False):
+    calibration_offsets: Required[AdcEncoderCalibration]
+    connection_id: Required[str]
+    decoder_event: Required[int]
+    kind: Required[Literal["adc_transition"]]
+    phase_map: Required[list[int]]
+    transitions: Required[list[int]]
+
+
+class ElectricalInputVariant7(TypedDict, total=False):
     connection_id: Required[str]
     cycle_sign: Required[int]
     kind: Required[Literal["gpio_fixed_cycle"]]
 
 
-class ElectricalInputVariant4(TypedDict, total=False):
+class ElectricalInputVariant8(TypedDict, total=False):
     active_value: Required[int]
     connection_id: Required[str]
     endpoint: Required[int]
@@ -1535,11 +1616,39 @@ class ElectricalInputVariant4(TypedDict, total=False):
     register: Required[int]
 
 
+class EncoderLevels(TypedDict, total=False):
+    high: Required[int]
+    low: Required[int]
+
+
+type EncoderOutputs = EncoderOutputsVariant0 | EncoderOutputsVariant1
+
+
+class EncoderOutputsVariant0(TypedDict, total=False):
+    kind: Required[Literal["gpio"]]
+
+
+class EncoderOutputsVariant1(TypedDict, total=False):
+    channels: Required[list[int]]
+    kind: Required[Literal["adc"]]
+    levels: Required[list[EncoderLevels]]
+
+
 class EventTranslation(TypedDict, total=False):
     address: Required[int]
     rows: Required[list[TranslatedKey]]
     sha256: Required[str]
     stride: Required[int]
+
+
+type ExecutionMechanism = ExecutionMechanismVariant0
+
+
+class ExecutionMechanismVariant0(TypedDict, total=False):
+    allocation: Required[HeapAllocation]
+    cache: Required[CacheSynchronization]
+    code_checks: Required[list[CodeCheck]]
+    kind: Required[Literal["exr2_query_heap"]]
 
 
 Firmware = TypedDict(
@@ -1705,6 +1814,22 @@ class FirmwareDescriptors(TypedDict, total=False):
     sampling: Required[str]
     sha256: Required[str]
     size: Required[int]
+
+
+FirmwareExecution = TypedDict(
+    "FirmwareExecution",
+    {
+        "$schema": Required["str"],
+        "code_alias": Required["int"],
+        "firmware_id": Required["str"],
+        "id": Required["str"],
+        "internal_version": Required["str"],
+        "mechanism": Required["ExecutionMechanism"],
+        "product": Required["str"],
+        "schema": Required["int"],
+    },
+    total=False,
+)
 
 
 FirmwareFacts = TypedDict(
@@ -2250,10 +2375,12 @@ class HardwareAtcm(TypedDict, total=False):
 
 
 class HardwareBlockParameters(TypedDict, total=False):
+    byte_ns: NotRequired[int | None]
     command_latency_us: NotRequired[int | None]
     commit_ticks: NotRequired[int | None]
     companion_irq_base: NotRequired[int | None]
     configuration_word: NotRequired[int | None]
+    interrupt: NotRequired[int | None]
     receive_request: NotRequired[int | None]
     source_hz: NotRequired[int | None]
     ticks_per_second: NotRequired[int | None]
@@ -2464,14 +2591,16 @@ class HardwareDramController(TypedDict, total=False):
 
 
 class HardwareEncoder(TypedDict, total=False):
+    adc: NotRequired[str | None]
     counter: NotRequired[str | None]
     name: Required[str]
     options: Required[HardwareEncoderTiming]
 
 
 class HardwareEncoderTiming(TypedDict, total=False):
+    outputs: NotRequired[EncoderOutputs | None]
     phase_ticks: Required[int]
-    pins: Required[list[PartAssemblyPin]]
+    pins: NotRequired[list[PartAssemblyPin] | None]
     rest_phase: Required[int]
 
 
@@ -2565,6 +2694,14 @@ class HardwareGic(TypedDict, total=False):
 class HardwareGpio(TypedDict, total=False):
     base: Required[int]
     basis: Required[str]
+    size: Required[int]
+
+
+class HardwareH264Encoder(TypedDict, total=False):
+    base: Required[int]
+    basis: Required[str]
+    irq_route: Required[int]
+    run_ticks: Required[int]
     size: Required[int]
 
 
@@ -2845,6 +2982,7 @@ class HardwareRegisterLayouts(TypedDict, total=False):
     frame_sync: NotRequired[HardwareFrameSync | None]
     gic: NotRequired[HardwareGic | None]
     gpio: NotRequired[HardwareGpio | None]
+    h264_encoder: NotRequired[HardwareH264Encoder | None]
     hdmi_tx: NotRequired[HardwareHdmiTransmitter | None]
     imaging: NotRequired[HardwareImagingRegisters | None]
     imaging_control: NotRequired[HardwareImagingControl | None]
@@ -3086,6 +3224,12 @@ class HardwareXppUsb(TypedDict, total=False):
     irq_route: Required[int]
     size: Required[int]
     transaction_ticks: Required[int]
+
+
+class HeapAllocation(TypedDict, total=False):
+    allocate: Required[int]
+    configuration: Required[Configuration]
+    release: Required[int]
 
 
 class HomeSwitch(TypedDict, total=False):
@@ -4166,6 +4310,7 @@ class ResolvedSelection(TypedDict, total=False):
     bulk: NotRequired[FirmwareBulk | None]
     card_files: NotRequired[FirmwareCard | None]
     control_ids: NotRequired[FirmwareControlIds | None]
+    execution: NotRequired[FirmwareExecution | None]
     firmware: Required[Firmware]
     first_start: NotRequired[FirstStartMenu | None]
     flash: NotRequired[FirmwareFlash | None]
@@ -4175,6 +4320,9 @@ class ResolvedSelection(TypedDict, total=False):
     settings: NotRequired[FirmwareSettings | None]
     soc: Required[Soc]
     state: NotRequired[FirmwareState | None]
+    ui_event_codes: NotRequired[UiEventCodes | None]
+    ui_scene_names: NotRequired[UiSceneNames | None]
+    ui_setting_names: NotRequired[UiSettingNames | None]
 
 
 class Resources(TypedDict, total=False):
@@ -4201,6 +4349,7 @@ class Resources(TypedDict, total=False):
 
 class RestartMechanism(TypedDict, total=False):
     deadline_offset: Required[int]
+    deferred_timer: NotRequired[DeferredTimer | None]
     parameter_bytes: Required[int]
     power_off: Required[PowerOff]
     request: Required[int]
@@ -4351,6 +4500,9 @@ type RunExecutionScope = Literal[
 type RunFaceRegisterMode = Literal["retained_words"]
 
 
+type RunFaceResultProfile = Literal["empty", "box64x20", "box172x120"]
+
+
 type RunFaceStopProfile = Literal["declared-armed-face-dma-idle-abort-unmeasured"]
 
 
@@ -4368,6 +4520,7 @@ class RunFactoryOptions(TypedDict, total=False):
     display_frame_ticks: NotRequired[int | None]
     entry: NotRequired[RunEntry | None]
     face_register_mode: NotRequired[RunFaceRegisterMode | None]
+    face_result_profile: NotRequired[RunFaceResultProfile | None]
     face_stop_profile: NotRequired[RunFaceStopProfile | None]
     graphics_profile: NotRequired[RunGraphicsProfile | None]
     hdmi_sink: NotRequired[RunHdmiSink | None]
@@ -5310,6 +5463,7 @@ class SettingsField(TypedDict, total=False):
 class SettingsProfile(TypedDict, total=False):
     derived_fields: NotRequired[list[ProfileField]]
     header: Required[UpdateRange]
+    loader_offset: NotRequired[int | None]
     records: Required[dict[str, ProfileRecord]]
 
 
@@ -5455,6 +5609,11 @@ class TcmState(TypedDict, total=False):
     reset_address: Required[int]
 
 
+class TimerRoutine(TypedDict, total=False):
+    address: Required[int]
+    size: Required[int]
+
+
 type TimingOperation = Literal[
     "settle",
     "sample",
@@ -5469,6 +5628,48 @@ type TimingOperation = Literal[
 class TranslatedKey(TypedDict, total=False):
     event: Required[int]
     physical_key: Required[int]
+
+
+UiEventCodes = TypedDict(
+    "UiEventCodes",
+    {
+        "$schema": Required["str"],
+        "firmware_id": Required["str"],
+        "firmware_sha256": Required["str"],
+        "id": Required["str"],
+        "schema": Required["int"],
+        "ui_event_codes": Required["dict[str, int]"],
+    },
+    total=False,
+)
+
+
+UiSceneNames = TypedDict(
+    "UiSceneNames",
+    {
+        "$schema": Required["str"],
+        "firmware_id": Required["str"],
+        "firmware_sha256": Required["str"],
+        "id": Required["str"],
+        "schema": Required["int"],
+        "ui_scene_names": Required["dict[str, int]"],
+    },
+    total=False,
+)
+
+
+UiSettingNames = TypedDict(
+    "UiSettingNames",
+    {
+        "$schema": Required["str"],
+        "firmware_id": Required["str"],
+        "firmware_sha256": Required["str"],
+        "id": Required["str"],
+        "schema": Required["int"],
+        "ui_setting_names": Required["dict[str, int]"],
+    },
+    total=False,
+)
 
 
 class UpdateRange(TypedDict, total=False):

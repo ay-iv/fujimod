@@ -35,8 +35,8 @@ const rows = [
     icon: 'flash',
   },
   {
-    id: 'sd-boot',
-    title: 'Download FujiMod SD boot',
+    id: 'sd-boot-v1',
+    title: 'Download FujiMod SD boot v1',
     subtitle: 'Dual boot from an SD card',
     icon: 'sd-card',
   },
@@ -71,6 +71,7 @@ export function CameraLauncher(props: {
     firmware: LibraryFirmware;
     format: FirmwareDownloadFormat;
     release: string;
+    updateFilename?: string;
   }>();
   const [downloading, setDownloading] = createSignal(false);
   const [downloadError, setDownloadError] = createSignal('');
@@ -84,9 +85,9 @@ export function CameraLauncher(props: {
     if (!chosen()) return false;
     switch (row.id) {
       case 'installable':
-        return !!patch()?.downloads.installable;
-      case 'sd-boot':
-        return !!patch()?.downloads.sd_card;
+        return !!patch()?.downloads.sd_boot_v1_installable;
+      case 'sd-boot-v1':
+        return !!patch()?.downloads.sd_boot_v1;
       case 'mod':
         return !!support()?.emu && !!support()?.mod;
       case 'stock':
@@ -103,7 +104,7 @@ export function CameraLauncher(props: {
     switch (row.id) {
       case 'installable':
         return `${label()} • Includes SD boot version`;
-      case 'sd-boot':
+      case 'sd-boot-v1':
         return `${label()} base firmware`;
       case 'mod':
         return `${label()} with ${modRelease()}`;
@@ -117,7 +118,12 @@ export function CameraLauncher(props: {
     if (row.id === 'mod' || row.id === 'stock') props.run(firmware, row.id === 'mod', false);
     else {
       setDownloadError('');
-      setModal({ firmware, format: row.id, release: modRelease() });
+      setModal({
+        firmware,
+        format: row.id,
+        release: modRelease(),
+        updateFilename: patch()?.update_filename,
+      });
     }
   }
   async function download() {
@@ -240,6 +246,7 @@ export function CameraLauncher(props: {
             format={target().format}
             firmware={target().firmware}
             release={target().release}
+            updateFilename={target().updateFilename}
             busy={downloading()}
             error={downloadError()}
             download={() => void download()}

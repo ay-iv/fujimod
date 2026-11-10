@@ -758,6 +758,15 @@
       "additionalProperties": false,
       "description": "Declared windows options facts.",
       "properties": {
+        "byte_ns": {
+          "description": "Declared virtual time from an I2C byte command to its completion.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "command_latency_us": {
           "description": "Declared command latency us.",
           "format": "uint64",
@@ -787,6 +796,15 @@
         },
         "configuration_word": {
           "description": "Declared read-only clock configuration input.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "interrupt": {
+          "description": "Declared interrupt line of the block.",
           "format": "uint32",
           "minimum": 0,
           "type": [
@@ -1585,6 +1603,48 @@
       "required": [
         "base",
         "basis",
+        "size"
+      ],
+      "type": "object"
+    },
+    "HardwareH264Encoder": {
+      "additionalProperties": false,
+      "description": "X-Processor Pro movie H.264 encoder.",
+      "properties": {
+        "base": {
+          "description": "Declared base.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "basis": {
+          "description": "Declared basis.",
+          "type": "string"
+        },
+        "irq_route": {
+          "description": "Interrupt line of the completion status.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "run_ticks": {
+          "description": "Time from a start to the completion of its run, in device ticks.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "size": {
+          "description": "Declared size.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "base",
+        "basis",
+        "irq_route",
+        "run_ticks",
         "size"
       ],
       "type": "object"
@@ -2687,6 +2747,17 @@
             }
           ],
           "description": "Declared gpio."
+        },
+        "h264_encoder": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HardwareH264Encoder"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Declared X-Processor Pro movie H.264 encoder."
         },
         "hdmi_tx": {
           "anyOf": [

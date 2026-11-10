@@ -21,18 +21,18 @@ interpreter, runtime adapter and browser checks. The shared
 Use `mise install`, then work in `apps/web`:
 
 ```sh
-npm ci
-npm --prefix packages/emulator-ui ci
+pnpm install --frozen-lockfile
 cd apps/web
-npm ci
-npm test
-npm run dev
+pnpm test
+pnpm run dev
 ```
 
 The root `web-build`, `web-test` and `web-preview` mise tasks run from that
 application directory. `web-test` runs both `@fujimod/emulator-ui` tests and the
-web app tests through `apps/web`'s `npm test`. The Pages workflow builds
-`apps/web` from approved main releases. Review branches do not deploy Pages.
+web app tests through `apps/web`'s `pnpm test`. The Web deploy workflow deploys `main`
+to `fujimod.com` nightly when it changed, reusing the deployed emulator runtimes and
+media; a maintainer deploys new runtimes by hand
+([apps/web/DEPLOYMENT.md](apps/web/DEPLOYMENT.md)). Merging does not deploy.
 
 ## Rust libraries
 

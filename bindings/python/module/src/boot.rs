@@ -12,7 +12,18 @@ impl Boot for CatalogBoot {
         serde_json::to_string(&prepared.to_json()).map_err(|failure| failure.to_string())
     }
     fn open(&self, inputs: Inputs) -> Result<Session, String> {
-        boot::open(boot::Options {
+        let access_point = inputs
+            .access_point
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(|error| format!("virtual access point JSON: {error}"))?;
+        let capability_reply = inputs
+            .capability_reply
+            .as_deref()
+            .map(|bytes| <[u8; 20]>::try_from(bytes).map_err(|_| "MT5931 capability fixture must be 20 bytes"))
+            .transpose()?;
+        boot::open_with_ram_fill(boot::Options {
             configuration_id: inputs.configuration_id,
             overlays: inputs.overlays,
             update: inputs.update,
@@ -22,7 +33,9 @@ impl Boot for CatalogBoot {
             clock_seconds_2000: inputs.clock_seconds_2000,
             preferred_languages: inputs.preferred_languages,
             camera: inputs.camera,
-        })
+            access_point,
+            capability_reply,
+        }, inputs.ram_fill)
     }
     fn to_rec(&self, session: &mut Session, limit: u64) -> Result<String, String> {
         let report = boot::to_rec(session, limit)?;

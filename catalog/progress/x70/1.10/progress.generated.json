@@ -55,6 +55,11 @@
           "result": "pass"
         },
         {
+          "id": "card-files",
+          "title": "Optional card file access located",
+          "result": "pass"
+        },
+        {
           "id": "controls",
           "title": "Physical controls mapped to firmware inputs",
           "result": "pass"
@@ -67,6 +72,16 @@
         {
           "id": "sd-facts",
           "title": "SD-boot load map and packaging located",
+          "result": "pass"
+        },
+        {
+          "id": "nand-boot-facts",
+          "title": "EXR II NAND bootloader facts located",
+          "result": "pass"
+        },
+        {
+          "id": "boot-patch-facts",
+          "title": "Boot-patch triggers, clears and free spaces located",
           "result": "pass"
         }
       ]
@@ -81,6 +96,16 @@
           "result": "pass"
         },
         {
+          "id": "sd-boot-v2-autostart-starts-in-emulator",
+          "title": "SD boot v2: autostart starts in the emulator",
+          "result": "stale"
+        },
+        {
+          "id": "sd-boot-v2-patch-triggers-fire-in-emulator",
+          "title": "SD boot v2: patch triggers fire in the emulator",
+          "result": "stale"
+        },
+        {
           "id": "menu",
           "title": "Menus respond to remote control",
           "result": "pass"
@@ -91,14 +116,19 @@
           "result": "not-run"
         },
         {
-          "id": "emulator-sd-boot",
-          "title": "Our SD card of the stock firmware boots",
+          "id": "sd-boot-v1-stock-boots-in-emulator",
+          "title": "SD boot v1: stock firmware boots from an SD card in the emulator",
           "result": "pass"
         },
         {
-          "id": "emulator-updater",
-          "title": "The stock updater installs an update from the card",
+          "id": "firmware-update-stock-installs-in-emulator",
+          "title": "Firmware update: stock updater installs an update from an SD card in the emulator",
           "result": "pass"
+        },
+        {
+          "id": "sd-boot-v2-fujimod-boots-in-emulator",
+          "title": "SD boot v2: FujiMod boots from an SD card in the emulator",
+          "result": "not-run"
         }
       ]
     },
@@ -137,6 +167,16 @@
           "result": "pass"
         },
         {
+          "id": "camera-fast-memory",
+          "title": "Memory capture measured at 8 MiB/s or more",
+          "result": "stale"
+        },
+        {
+          "id": "camera-fast-flash",
+          "title": "Flash capture measured at 8 MiB/s or more",
+          "result": "stale"
+        },
+        {
           "id": "camera-debug",
           "title": "Debug mode saved persistently",
           "result": "pass"
@@ -168,6 +208,11 @@
       "title": "FujiMod",
       "stages": [
         {
+          "id": "language-font-bank",
+          "title": "Language font bank located and kept out of mod memory",
+          "result": "pass"
+        },
+        {
           "id": "mod-target",
           "title": "Mod target generated from facts",
           "result": "stale"
@@ -183,14 +228,19 @@
           "result": "not-run"
         },
         {
-          "id": "sd-image",
-          "title": "Dual-boot SD image built",
+          "id": "sd-boot-v1-fujimod-built",
+          "title": "SD boot v1: FujiMod SD image built",
           "result": "stale"
         },
         {
-          "id": "flash-update",
-          "title": "Flashable update built",
+          "id": "firmware-update-fujimod-built",
+          "title": "Firmware update: FujiMod update built",
           "result": "not-run"
+        },
+        {
+          "id": "sd-boot-v2-fujimod-built",
+          "title": "SD boot v2: FujiMod release built",
+          "result": "stale"
         }
       ]
     },
@@ -199,28 +249,38 @@
       "title": "SD card and install",
       "stages": [
         {
-          "id": "sd-select",
-          "title": "The boot ROM loads a green-LED card",
+          "id": "boot-rom-loads-sd-card-on-camera",
+          "title": "Boot ROM: loads an SD card on a camera",
           "result": "pass"
         },
         {
-          "id": "sd-stock-boot",
-          "title": "Our card dual-boots the stock firmware",
+          "id": "sd-boot-v1-stock-boots-on-camera",
+          "title": "SD boot v1: stock firmware boots from an SD card on a camera",
           "result": "not-run"
         },
         {
-          "id": "sd-recovery",
-          "title": "A flash-free card applies an official update",
-          "result": "not-run"
-        },
-        {
-          "id": "sd-boot",
-          "title": "FujiMod boots from the card",
+          "id": "sd-boot-v1-fujimod-boots-on-camera",
+          "title": "SD boot v1: FujiMod boots from an SD card on a camera",
           "result": "pass"
         },
         {
-          "id": "full-install",
-          "title": "FujiMod installed as a firmware update",
+          "id": "sd-boot-v2-fujimod-boots-on-camera",
+          "title": "SD boot v2: FujiMod boots from an SD card on a camera",
+          "result": "not-run"
+        },
+        {
+          "id": "sd-boot-v2-autostart-installs-on-camera",
+          "title": "SD boot v2: autostart installs on a camera",
+          "result": "not-run"
+        },
+        {
+          "id": "firmware-update-stock-installs-on-camera",
+          "title": "Firmware update: stock updater installs an update from an SD card on a camera",
+          "result": "not-run"
+        },
+        {
+          "id": "firmware-update-fujimod-installs-on-camera",
+          "title": "Firmware update: FujiMod installs on a camera",
           "result": "not-run"
         }
       ]
@@ -287,6 +347,7 @@
     "af": "stale",
     "fujimod": "stale",
     "aspect-ratio": "stale",
+    "raw-teleconverter": "not-run",
     "surround-view": "stale",
     "desqueeze": "stale",
     "desqueeze-jpeg": "stale",
@@ -296,6 +357,7 @@
     "film-sims": "not-run",
     "card-films": "stale",
     "film-editor": "not-run",
+    "film-grain": "not-run",
     "highlight-meter": "not-run",
     "raw-view": "stale",
     "f-log": "stale",
@@ -305,12 +367,15 @@
     "menu-theme": "not-run",
     "overlay-opacity": "stale",
     "menu-tap": "stale",
+    "glgui": "not-run",
     "recipes": "not-run",
     "snap-focus": "stale",
     "usb-debug": "stale",
     "af-scene-capture": "stale",
     "bug-report": "stale",
     "sd-volume-name": "stale",
-    "date-folders": "stale"
+    "date-folders": "stale",
+    "software-nd": "not-run",
+    "ota-runtime": "not-run"
   }
 }

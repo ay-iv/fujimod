@@ -12,7 +12,7 @@ use crate::{
     Limits,
     bulk::{Access, BulkError, Result, check_camera, hex},
 };
-use fujimod_catalog_restart::{FirmwareRestart, RecIdle, RequestTransport, WordValue};
+use fujimod_catalog_restart::{DeferredTimer, FirmwareRestart, RecIdle, RequestTransport, WordValue};
 use fujimod_usb::{
     ff80::{
         Session, SessionState,
@@ -83,6 +83,41 @@ pub fn parameters(restart: &FirmwareRestart) -> Vec<u8> {
         parameters[at..at + 4].copy_from_slice(&value.to_le_bytes());
     }
     parameters
+}
+
+/// Bytes for `queue_auto_restart_contract` in the portable ARM32 guard.
+///
+/// The guard carries no firmware-specific imports: Rust writes this contract
+/// only after the selected restart profile and its callback-timer ABI have
+/// validated.  The final word is the timer handle, initially zero.
+pub fn deferred_guard_contract(restart: &FirmwareRestart, milliseconds: u32) -> Result<Vec<u8>> {
+    restart.validate().map_err(BulkError::Check)?;
+    let timer = restart
+        .mechanism
+        .deferred_timer
+        .as_ref()
+        .ok_or_else(|| BulkError::Check("No deferred callback timer is published".into()))?;
+    validate_deferred_timer(timer)?;
+    require(milliseconds != 0, "Deferred restart delay must be nonzero")?;
+    let mut request = parameters(restart);
+    request.resize(12, 0);
+    let mut contract = Vec::with_capacity(28);
+    for word in [timer.start.address, timer.cancel.address, restart.mechanism.sender] {
+        contract.extend_from_slice(&address(word)?.0.to_le_bytes());
+    }
+    contract.extend_from_slice(&request);
+    contract.extend_from_slice(&0u32.to_le_bytes());
+    Ok(contract)
+}
+
+fn validate_deferred_timer(timer: &DeferredTimer) -> Result<()> {
+    require(
+        timer.kind == "software-timer-callback-v1"
+            && timer.period_unit == "milliseconds"
+            && timer.one_shot_periodic == 0
+            && timer.callback_arguments == 0,
+        "Unsupported deferred callback timer ABI",
+    )
 }
 
 /// AArch64 stub at `at`: `adr x0, parameters; b sender`, two `brk #0`, then
@@ -318,5 +353,25 @@ mod tests {
     #[test]
     fn stub_refuses_a_sender_beyond_direct_branch_range() {
         assert!(console_stub(0x200000, 0x2000_0000, &[0; 8]).is_err());
+    }
+
+    #[test]
+    fn deferred_guard_contract_uses_the_published_timer_and_wake_abi() {
+        let restart: FirmwareRestart = serde_json::from_str(include_str!(
+            "../../../catalog/firmware/x70/1.10/restart.generated.json"
+        ))
+        .unwrap();
+        let contract = deferred_guard_contract(&restart, 600_000).unwrap();
+        let words: Vec<u32> = contract
+            .chunks_exact(4)
+            .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+            .collect();
+        assert_eq!(words.len(), 7);
+        assert_eq!(words[0], 0x93d4bc);
+        assert_eq!(words[1], 0x93d6b4);
+        assert_eq!(words[2], restart.mechanism.sender as u32);
+        assert_eq!(words[3], restart.mechanism.request);
+        assert_eq!(words[4], WAKE_DEADLINE);
+        assert_eq!(words[5..], [0, 0]);
     }
 }

@@ -27,6 +27,7 @@ fn main() {
         ("soc", "Soc"),
         ("parts", "Part"),
         ("bodies", "Body"),
+        ("boot-roms", "BootRom"),
         ("firmware", "Firmware"),
     ];
     let mut files = Vec::new();
@@ -61,8 +62,13 @@ fn main() {
             ("Firmware", "ui-setting-names.generated.json") => "UiSettingNames",
             ("Firmware", "ui-event-codes.generated.json") => "UiEventCodes",
             ("Firmware", "bulk.generated.json") => "Bulk",
+            ("Firmware", "sd-boot-v2-autostart.generated.json") => "NandBoot",
+            ("Firmware", "boot-patch.generated.json") => "BootPatch",
+            ("BootRom", _) => "BootRom",
             ("Firmware", "card-files.generated.json") => "CardFiles",
+            ("Firmware", "execution.generated.json") => "Execution",
             ("Firmware", "restart.generated.json") => "Restart",
+            ("Firmware", "memory-reservations.generated.json") => "MemoryReservations",
             ("Firmware", "settings.generated.json") => "Settings",
             ("Firmware", "flash.generated.json") => "Flash",
             ("Firmware", "state.generated.json") => "State",

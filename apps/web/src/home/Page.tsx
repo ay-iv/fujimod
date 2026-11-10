@@ -6,15 +6,11 @@ import { createHomeState } from './state';
 import { startHome, type HomeController } from './controller';
 import { FaultPanel } from '@fujimod/emulator-ui/ui/fault';
 import { CameraTable } from '../ui/cameras';
-import {
-  byModel,
-  withOverrides,
-  type FirmwareProgress,
-  type ProgressOverride,
-} from '../ui/camera-progress';
+import { cameraProgress } from '../ui/catalog-progress';
 import { PersonalNote } from '../ui/personal-note';
 import { SiteHeader } from '../ui/site-header';
 import { FeatureCatalog } from './Features';
+import { SdBootV2Download } from './sd-boot-v2/SdBootV2Download';
 import { createFirmwareLibrary } from '../cameras/firmware-library';
 import { sha256 } from '../patch/patcher';
 import { initialize } from 'fujimod';
@@ -26,30 +22,6 @@ import generations from '../../devices/generations.json';
 import owners from '../../devices/owners.json';
 import '../home/site.css';
 import '../navigation.css';
-
-/** Latest recorded bring-up progress with publishing overrides, from the catalog at build time. */
-const cameraProgress = byModel(
-  withOverrides(
-    Object.values(
-      import.meta.glob<FirmwareProgress>(
-        '../../../../catalog/progress/*/*/progress.generated.json',
-        {
-          eager: true,
-          import: 'default',
-        },
-      ),
-    ),
-    Object.values(
-      import.meta.glob<ProgressOverride>(
-        '../../../../catalog/progress/*/*/progress.override.json',
-        {
-          eager: true,
-          import: 'default',
-        },
-      ),
-    ),
-  ),
-);
 
 export default function Home() {
   const [state, setState] = createHomeState();
@@ -98,6 +70,7 @@ export default function Home() {
         <main>
           <PersonalNote />
           <FeatureCatalog />
+          <SdBootV2Download release={state.release} catalog={state.catalog.firmwares} />
           <div class="emulator-heading">
             <h2 class="section-heading" id="software">
               Software
@@ -145,7 +118,7 @@ export default function Home() {
                 entry.name,
                 state.release?.firmwares.find(
                   (firmware) => firmware.sha256 === state.firmware?.sha256,
-                )?.downloads,
+                ),
               )
             }
             onLayoutChange={(panel) => runtime()?.saveLayout(panel)}

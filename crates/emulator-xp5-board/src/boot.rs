@@ -525,7 +525,7 @@ pub fn assemble_devices(
         ))
     };
     xp5_board::register_all(&mut graph, &windows, &mut resources, &mut unknown)?;
-    if !resources.sd.is_empty() { return Err("XP5 profile has unused card media".into()); }
+    xp5_board::sd::require_hosts(&resources.sd)?;
     if !resources.displays.is_empty() {
         return Err("XP5 profile has unused display configurations".into());
     }
@@ -667,6 +667,7 @@ pub fn open(
         resources: Default::default(),
         nodes: assembly.nodes,
         contacts: assembly.contacts,
+        power_cycle: None,
         recording_frames: Default::default(),
     };
     Ok((session, assembly.inputs))

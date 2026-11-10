@@ -228,7 +228,7 @@ fn settings_medium(
 mod tests {
     use super::*;
     #[test]
-    fn committed_nand_input_keeps_program_erase_and_base_identity() {
+    fn committed_nand_input_keeps_program_erase_and_geometry() {
         let options = Options {
             bytes: 262144,
             page_bytes: 2048,
@@ -247,7 +247,7 @@ mod tests {
         medium
             .program(64, &vec![0x85; 2048], &vec![0x12; 64])
             .unwrap();
-        let mut assets = BTreeMap::from([
+        let assets = BTreeMap::from([
             ("base".into(), base),
             ("saved".into(), medium.committed_image().unwrap()),
         ]);
@@ -257,18 +257,19 @@ mod tests {
             .unwrap()
             .build(&assets)
             .unwrap();
-        assert_eq!(restored.fingerprint(), medium.fingerprint());
+        assert_eq!(restored, medium);
         let mut bytes = [0; 2048];
         restored.read(0, &mut bytes).unwrap();
         assert_eq!(bytes, [255; 2048]);
-        assets.insert("base".into(), vec![0; 2048]);
+        let mut wrong = spec;
+        wrong["options"]["page_bytes"] = serde_json::json!(512);
         assert!(
-            serde_json::from_value::<NandInput>(spec)
+            serde_json::from_value::<NandInput>(wrong)
                 .unwrap()
                 .build(&assets)
                 .err()
                 .unwrap()
-                .contains("identity")
+                .contains("geometry")
         );
     }
 
@@ -378,7 +379,7 @@ mod card_tests {
             .unwrap()
             .build(&assets)
             .unwrap();
-        assert_eq!(restored.fingerprint(), card.fingerprint());
+        assert_eq!(restored, card);
         let mut invalid = serde_json::to_value(&card).unwrap();
         invalid["max_dirty"] = serde_json::json!(0);
         assets.insert("saved".into(), serde_json::to_vec(&invalid).unwrap());

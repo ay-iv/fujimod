@@ -16,6 +16,12 @@ pub struct Inputs {
     pub clock_seconds_2000: Option<u32>,
     pub preferred_languages: Vec<String>,
     pub camera: Option<PathBuf>,
+    /// One virtual access point for the MT5931 endpoint, as JSON text.
+    pub access_point: Option<String>,
+    /// Explicit 20-byte MT5931 capability fixture.
+    pub capability_reply: Option<Vec<u8>>,
+    /// Initial physical RAM byte; also retain RAM across restarts.
+    pub ram_fill: Option<u8>,
 }
 
 pub trait Boot: Sync {

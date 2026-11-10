@@ -27,6 +27,8 @@ requests that FSKit inhibit kernel offloaded I/O; applications should use
 `pread` or seek/read and handle I/O errors. A regular address-indexed file is
 the POSIX interface here: no privileged character-device driver is needed.
 The current adapter does not provide a custom `mmap` interface.
+Reads may be any length; the adapter splits them into bounded device exchanges
+at the memory and card request limits, so callers do not need to cap `read(2)`.
 
 ## Run
 
@@ -40,13 +42,16 @@ The pinned 0.1.0 host has a profile valid through October 25, 2043 and uses the
 same wire protocol as the Rust crate. The 0.2.0 host archive has an expired
 profile and cannot launch; rebooting does not repair that profile.
 Building requires Rust, `protoc`, Clang with ARM support, and LLD
-(`brew install protobuf llvm`). `CLANG` and `LD_LLD` select build tools.
+(`brew install protobuf lld` with Xcode's Clang). `CLANG` and `LD_LLD` select
+build tools.
 The camera helper is compiled into the mount executable; mounting runs no compiler.
 
 The camera must already provide an available ff80 debug service. Select a
 firmware with readable memory facts in the bundled catalog. The `sd/` subtree
 is present when that firmware also has a card capability. The command verifies
 camera identity and the selected code checks before starting the mount.
+When the card capability's file service is not installed in camera RAM, as on
+stock firmware, the command exits with status 3 instead of 1.
 
 ```sh
 mkdir -p /tmp/fuji
@@ -86,7 +91,10 @@ Use `--device` (or `FUJIMOD_USB_DEVICE`) to select a bus, bus/port key or serial
 when more than one camera is attached. `--read-limit` and `--write-limit` set
 ff80 command payload limits; both default to 256 bytes. These limits do not
 limit qualified E0/E1 bulk transfers. Ctrl-C synchronizes and
-unmounts; keep the process running while using the volume.
+unmounts; keep the process running while using the volume. An uncertain ff80
+completion fences the camera session: the mount drops the FSKit volume and
+exits nonzero so it behaves like a removed card, and a later mount must wait
+for a USB restart to clear the fence.
 
 SD paths currently use 8.3 names and fewer than 48 bytes including drive and
 separators; regular files are limited to 4 GiB minus one byte. Existing
@@ -125,6 +133,8 @@ publication state and closes ff80 after 20 ms without another read. It blocks
 without polling after releasing the lease. File handles close before each reply,
 and writes are committed before replying. Synchronization flushes a pending
 read lease. Unmount releases any remaining helper allocation and reports cleanup errors.
+An uncertain completion is terminal for the mount: the worker sets a fatal
+flag, the host unmounts and exits, and it never reuses or reclaims that session.
 Flash reads yield the file helper allocation first, then recreate it on the next
 SD operation. Other tools can acquire ff80 between bursts and while idle.
 

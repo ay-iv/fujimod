@@ -389,3 +389,45 @@ fn display_files_are_read_only_and_chunk_reads_share_one_open_snapshot() {
             .all(|(name, _, _)| !name.starts_with("write"))
     );
 }
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn adapter_splits_reads_larger_than_one_device_exchange() {
+    let length = (64 << 20) + 4096;
+    let fs = CameraFs::new(
+        TestDevice::default(),
+        vec![Region {
+            name: "ram".into(),
+            address: 0,
+            size: length as u64,
+        }],
+    )
+    .unwrap();
+    let mut adapter = crate::fskit::Adapter::new(fs, 0, 0);
+    let data = fskit_rs::Filesystem::read(&mut adapter, MEMORY, 0, length as i64)
+        .await
+        .unwrap();
+    assert_eq!(data.len(), length);
+}
+
+#[test]
+fn read_only_device_reads_the_card_and_refuses_every_change() {
+    let device = TestDevice::default();
+    device
+        .0
+        .lock()
+        .unwrap()
+        .files
+        .insert("A:\\DCIM\\IMAGE.JPG".into(), (0..128).collect());
+    let mut fs = CameraFs::new(read_only::ReadOnly(device.clone()), vec![]).unwrap();
+    let folder = fs.lookup(SD, "DCIM").unwrap();
+    let image = fs.lookup(folder.id, "IMAGE.JPG").unwrap();
+    assert_eq!(fs.read(image.id, 4, 4).unwrap(), vec![4, 5, 6, 7]);
+    assert_eq!(fs.write(image.id, 0, b"x").err(), Some(libc::EROFS));
+    assert_eq!(fs.create(SD, "new.bin", false).err(), Some(libc::EROFS));
+    assert_eq!(fs.truncate(image.id, 0).err(), Some(libc::EROFS));
+    assert_eq!(fs.remove(folder.id, "IMAGE.JPG").err(), Some(libc::EROFS));
+    let state = device.0.lock().unwrap();
+    assert_eq!(state.files.len(), 1);
+    assert_eq!(state.files["A:\\DCIM\\IMAGE.JPG"], (0..128).collect::<Vec<u8>>());
+}

@@ -55,6 +55,12 @@ pub struct Options {
     /// Directory of the camera's zstd-compressed NAND sections
     /// (`nand-<section>.bin.zst`), for a run whose settings name a camera.
     pub camera: Option<PathBuf>,
+    /// One virtual access point for the MT5931 endpoint, as its serialized
+    /// device option. Absence leaves the endpoint without an RF peer.
+    pub access_point: Option<Value>,
+    /// Explicit 20-byte MT5931 capability fixture for a run that exercises
+    /// stock Wi-Fi initialization. Absence refuses the capability query.
+    pub capability_reply: Option<[u8; 20]>,
 }
 
 /// Largest compressed camera NAND section accepted from the caller.
@@ -505,6 +511,29 @@ pub fn prepare(configuration_id: &str, overlays: &[String]) -> Result<Prepared, 
 }
 
 impl Prepared {
+    fn duplicate(&self) -> Result<Self, String> {
+        Ok(Self {
+            resolved: self.resolved.clone(),
+            execution: serde_json::from_value(self.execution_value.clone())
+                .map_err(|e| e.to_string())?,
+            execution_value: self.execution_value.clone(),
+            plan: Plan::parse(
+                &serde_json::to_vec(&self.devices_value).map_err(|e| e.to_string())?,
+            )?,
+            devices_value: self.devices_value.clone(),
+            scene: self.scene.clone(),
+            execution_policy: self.execution_policy.clone(),
+            quantum: self.quantum,
+            update: self.update.clone(),
+            flash_offset: self.flash_offset,
+            boot_rom: self.boot_rom.clone(),
+            generated_assets: self.generated_assets.clone(),
+            reset_coprocessors: self.reset_coprocessors.clone(),
+            mcu: self.mcu.clone(),
+            observation: self.observation.clone(),
+            first_start: self.first_start.clone(),
+        })
+    }
     /// Produce the stable JSON projection used by the native Python adapter.
     pub fn to_json(&self) -> Value {
         json!({
@@ -808,7 +837,15 @@ impl Prepared {
 /// Construct an unexecuted strict board from explicitly selected files.
 /// No directory search, downloaded image, captured default or firmware patch is used.
 pub fn open(options: Options) -> Result<Session, String> {
-    let prepared = prepare(&options.configuration_id, &options.overlays)?;
+    open_with_ram_fill(options, None)
+}
+
+/// Boot with a deterministic initial RAM byte and retain RAM over restarts.
+pub fn open_with_ram_fill(options: Options, ram_fill: Option<u8>) -> Result<Session, String> {
+    let mut prepared = prepare(&options.configuration_id, &options.overlays)?;
+    if options.access_point.is_some() || options.capability_reply.is_some() {
+        prepared.set_mt5931(options.access_point, options.capability_reply)?;
+    }
     let update = checked(&options.update, &prepared.update)?;
     let boot_rom = checked(&options.boot_rom, &prepared.boot_rom.content)?;
     let inputs = InputBytes {
@@ -833,7 +870,42 @@ pub fn open(options: Options) -> Result<Session, String> {
             .transpose()?
             .unwrap_or_default(),
     };
-    open_prepared(prepared, inputs)
+    open_prepared_with_ram_fill(prepared, inputs, ram_fill)
+}
+
+impl Prepared {
+    fn set_mt5931(
+        &mut self,
+        access_point: Option<Value>,
+        capability_reply: Option<[u8; 20]>,
+    ) -> Result<(), String> {
+        let nodes = self
+            .devices_value
+            .get_mut("nodes")
+            .and_then(Value::as_array_mut)
+            .ok_or("prepared devices have no node list")?;
+        let sdio = nodes
+            .iter_mut()
+            .find(|node| node.get("name").and_then(Value::as_str) == Some("sdio"))
+            .ok_or("run has no MT5931 endpoint")?;
+        let module = sdio
+            .pointer_mut("/model/module")
+            .ok_or("run has no MT5931 module")?;
+        if module.get("protocol").and_then(Value::as_str) != Some("mt5931") {
+            return Err("run MT5931 module is not in endpoint mode".into());
+        }
+        let mt5931 = module
+            .get_mut("mt5931")
+            .and_then(Value::as_object_mut)
+            .ok_or("run has no MT5931 options")?;
+        if let Some(access_point) = access_point {
+            mt5931.insert("access_point".into(), access_point);
+        }
+        if let Some(capability_reply) = capability_reply {
+            mt5931.insert("capability_reply".into(), json!(capability_reply));
+        }
+        Ok(())
+    }
 }
 
 /// The camera's compressed NAND sections in `directory`: one
@@ -865,10 +937,52 @@ fn camera_sections(
     Ok(sections)
 }
 
+struct RestartBuilder {
+    prepared: Prepared,
+    inputs: InputBytes,
+    ram_fill: Option<u8>,
+}
+impl fujimod_emulator_session::power_cycle::ColdBoot for RestartBuilder {
+    fn build(&mut self, tick: u64, counts: Vec<u64>, packet: [u8; 16]) -> Result<Session, String> {
+        open_prepared_epoch(
+            self.prepared.duplicate()?, self.inputs.clone(), Some((tick, counts, packet)), self.ram_fill,
+        )
+    }
+}
+
 /// Construct an unexecuted strict board from a prepared run and byte inputs.
-/// The engine is linked into the crate. A prepared run opens one board; prepare
-/// again for another.
 pub fn open_prepared(prepared: Prepared, inputs: InputBytes) -> Result<Session, String> {
+    open_prepared_with_ram_fill(prepared, inputs, None)
+}
+
+pub fn open_prepared_with_ram_fill(prepared: Prepared, inputs: InputBytes, ram_fill: Option<u8>) -> Result<Session, String> {
+    let ram = if ram_fill.is_some() {
+        prepared.execution.ram.iter().map(|r| (r.base, r.size)).collect()
+    } else { Vec::new() };
+    let cycle = if prepared.resolved.reference.firmware.id == "x70-110" {
+        Some(RestartBuilder { prepared: prepared.duplicate()?, inputs: inputs.clone(), ram_fill })
+    } else {
+        None
+    };
+    let mut session = open_prepared_epoch(prepared, inputs, None, ram_fill)?;
+    if let Some(builder) = cycle {
+        let media = fujimod_emulator_session::durable::Spec {
+            cards: session.contacts.keys().cloned().collect(),
+            nands: vec!["nand".into()],
+        };
+        session.configure_power_cycle(fujimod_emulator_session::power_cycle::PowerCycle::new(
+            "clocks".into(), media, Box::new(builder),
+        ).with_logic_inputs(vec!["usb_cable".into()]).with_retained_ram(ram))?;
+    }
+    Ok(session)
+}
+
+fn open_prepared_epoch(
+    prepared: Prepared,
+    inputs: InputBytes,
+    epoch: Option<(u64, Vec<u64>, [u8; 16])>,
+    ram_fill: Option<u8>,
+) -> Result<Session, String> {
     prepared
         .update
         .check(&inputs.update)
@@ -886,6 +1000,7 @@ pub fn open_prepared(prepared: Prepared, inputs: InputBytes) -> Result<Session, 
         return Err("NAND image must be at most 256 MiB".into());
     }
     let mut session_definition = prepared.to_json();
+    session_definition["inputs"]["ram_fill"] = json!(ram_fill);
     session_definition["inputs"]["nand_selected"] = json!(inputs.nand.is_some());
     session_definition["inputs"]["settings_selected"] = json!(inputs.settings.is_some());
     let InputBytes {
@@ -1016,9 +1131,14 @@ pub fn open_prepared(prepared: Prepared, inputs: InputBytes) -> Result<Session, 
             assets.insert("nand_image".into(), bytes);
         }
     }
+    if let Some((_, _, packet)) = &epoch {
+        settings_packet(&mut devices, &prepared.mcu, packet)?;
+    }
     let graph = prepared.execution;
     graph.validate()?;
-    let plan = if settings.is_some() || header_applied || clock_seconds_2000.is_some() {
+    let plan = if settings.is_some() || header_applied || clock_seconds_2000.is_some()
+        || epoch.is_some()
+    {
         Plan::parse(&serde_json::to_vec(&devices).map_err(|e| e.to_string())?)?
     } else {
         prepared.plan
@@ -1048,7 +1168,7 @@ pub fn open_prepared(prepared: Prepared, inputs: InputBytes) -> Result<Session, 
     let resources = serde_json::from_value::<preparation::Spec>(scene.clone())
         .map_err(|e| e.to_string())?
         .build(&assets)?;
-    let built = plan.build(resources, 0, &mut RefuseAdapters)?;
+    let built = plan.build(resources, epoch.as_ref().map_or(0, |e| e.0), &mut RefuseAdapters)?;
     let bus_mode = match prepared.execution_policy.mode {
         RunExecutionMode::Strict => Mode::Strict,
     };
@@ -1057,8 +1177,15 @@ pub fn open_prepared(prepared: Prepared, inputs: InputBytes) -> Result<Session, 
         RunEngine::Hypervisor => factory::Engine::Hypervisor,
     };
     let bus = Bus::from_graph(bus_mode, built.graph)?;
+    let mut options = factory::Options::new(engine);
+    if epoch.is_none() {
+        if let Some(byte) = ram_fill { options = options.with_ram_fill(byte); }
+    }
+    if let Some((tick, counts, _)) = epoch {
+        options = options.with_epoch(tick, counts);
+    }
     let mut board = graph.build(
-        factory::Options::new(engine),
+        options,
         bus,
         None,
     )?;
@@ -1083,6 +1210,7 @@ pub fn open_prepared(prepared: Prepared, inputs: InputBytes) -> Result<Session, 
         resources: built.resources,
         nodes: built.node_ids,
         contacts: built.contacts,
+        power_cycle: None,
         recording_frames: Default::default(),
     })
 }
@@ -1188,7 +1316,7 @@ fn advance(
         return Err("instruction limit reached during first-start input".into());
     }
     let tick = session.board.now();
-    session.board.run_with_limits(
+    session.run_with_limits(
         end - now,
         spec.quantum,
         Some(now.saturating_add(1_000_000).min(end)),
@@ -1383,6 +1511,21 @@ fn setup_calendar(
 /// Run a named runtime to REC or an explicit stopped frontier. First-start menus
 /// use calibrated UP/DOWN and MENU/OK ADC presses, never RAM writes.
 pub fn to_rec(session: &mut Session, instruction_limit: u64) -> Result<RecReport, String> {
+    let mut span = fujimod_perf::span(fujimod_perf::SpanKind::Boot);
+    let start = boot_progress(session);
+    let result = to_rec_inner(session, instruction_limit);
+    span.guest(start, boot_progress(session));
+    result
+}
+
+fn boot_progress(session: &Session) -> fujimod_perf::GuestProgress {
+    fujimod_perf::GuestProgress {
+        instructions: session.board.instruction_counts().iter().sum(),
+        ticks: session.board.now(),
+    }
+}
+
+fn to_rec_inner(session: &mut Session, instruction_limit: u64) -> Result<RecReport, String> {
     if instruction_limit == 0 {
         return Err("instruction limit must be positive".into());
     }

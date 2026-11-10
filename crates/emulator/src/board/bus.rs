@@ -20,10 +20,38 @@ impl Mode {
         }
     }
 }
+enum Publication {
+    Generation(u64),
+    State(Value),
+}
 struct Window {
     mappings: Vec<Mapping>,
     device: Box<dyn Device>,
     native_dependencies: Vec<usize>,
+}
+
+/// One device's complete typed state and its bus wiring.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DeviceState {
+    pub kind: String,
+    pub mappings: Vec<Mapping>,
+    pub native_dependencies: Vec<usize>,
+    pub checkpoint: fujimod_emulator_devices::checkpoint::Checkpoint,
+}
+
+/// Complete future-affecting bus state, excluding host-only visit stamps.
+#[derive(Clone, Debug, PartialEq)]
+pub struct State {
+    pub mode: Mode,
+    pub unmodeled: Value,
+    pub discovery_shadow: Value,
+    pub continue_refusals: bool,
+    pub frontier: Value,
+    pub skipped_deadlines: BTreeMap<usize, u64>,
+    pub touched: Vec<usize>,
+    pub dirty: Vec<bool>,
+    pub wake_queue: Vec<usize>,
+    pub devices: Vec<DeviceState>,
 }
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -90,7 +118,6 @@ struct Transactions {
     ranges: Option<Vec<TransactionRange>>,
 }
 pub struct Bus {
-    host_profile: Option<super::host_profile::Profile>,
     transactions: Option<Transactions>,
     continuation: Option<std::rc::Rc<std::cell::RefCell<super::continuation::Stops>>>,
     windows: Vec<Window>,
@@ -219,31 +246,63 @@ impl Bus {
         self.wake_generation = saved.wake_generation;
         Ok(())
     }
-    pub(super) fn fingerprint(&self) -> Result<Value, String> {
+    /// Complete typed state for direct comparison. The same fields the
+    /// previous fingerprint covered, with device state retained as typed
+    /// checkpoints instead of digest leaves.
+    pub(super) fn state_capture(&self) -> Result<State, String> {
+        if !self.pending_pcs.is_empty() {
+            return Err("state requires completed discovery PC recording".into());
+        }
         let devices = self
             .windows
             .iter()
             .enumerate()
             .map(|(index, node)| {
-                let mut value = json!({"kind":node.device.name(),"windows":node.mappings,
-                    "native_dependencies":node.native_dependencies});
-                value["state"] = node
-                    .device
-                    .fingerprint()
-                    .map_err(|e| format!("device {index} ({}): {e}", node.device.name()))?;
-                Ok(value)
+                Ok(DeviceState {
+                    kind: node.device.name().to_owned(),
+                    mappings: node.mappings.clone(),
+                    native_dependencies: node.native_dependencies.clone(),
+                    checkpoint: node
+                        .device
+                        .checkpoint()
+                        .map_err(|e| format!("device {index} ({}): {e}", node.device.name()))?,
+                })
             })
             .collect::<Result<Vec<_>, String>>()?;
-        let mut state = self.state_with_devices(Value::Array(devices));
-        state["skipped_deadlines"] = json!(self.skipped_deadlines);
-        // Visit stamps only deduplicate one already-drained worklist. Their
-        // arbitrary identities are accelerator bookkeeping, not pending work.
-        state["wakeups"] = json!({"touched":self.touched,"dirty":self.dirty,
-            "queue":self.wake_queue});
-        if !self.pending_pcs.is_empty() {
-            return Err("fingerprint requires completed discovery PC recording".into());
-        }
-        Ok(state)
+        let mut frontier = self
+            .unknown
+            .iter()
+            .map(|(site, r)| {
+                json!({
+                    "first":r.first,"count":r.count,"tick":r.tick,"pcs":r.pcs,"model":r.model,
+                    "kind":site.kind,"device":site.device,"phase":site.phase,"cpu":site.cpu,
+                    "pc":site.pc,"address":site.address,"size":site.size,"write":site.write,
+                    "value":site.value,"message":site.message,
+                })
+            })
+            .collect::<Vec<_>>();
+        frontier.sort_by_key(|r| r["first"].as_u64().unwrap());
+        Ok(State {
+            mode: self.mode,
+            unmodeled: self
+                .unknown
+                .iter()
+                .filter(|(site, _)| site.kind == "unmodeled-mmio")
+                .map(|(site, r)| {
+                    json!({"address":site.address,"pc":site.pc,"reads":r.reads,"writes":r.writes,
+                        "sizes":r.sizes,"cpus":r.cpus,"values":r.values,
+                        "values_omitted":r.values_omitted,"reasons":r.reasons})
+                })
+                .collect(),
+            discovery_shadow: json!(self.shadow.iter().collect::<Vec<_>>()),
+            continue_refusals: self.continue_refusals,
+            frontier: Value::Array(frontier),
+            skipped_deadlines: self.skipped_deadlines.clone(),
+            touched: self.touched.clone(),
+            dirty: self.dirty.clone(),
+            wake_queue: self.wake_queue.clone(),
+            devices,
+        })
     }
 
     /// Read only the selected native device kind; no access or tick is issued.
@@ -261,15 +320,26 @@ impl Bus {
     ) {
         self.continuation = stops;
     }
-    fn publication_before(&self, id: usize) -> Option<Value> {
+    fn publication_before(&self, id: usize) -> Option<Publication> {
         self.continuation
             .as_ref()
             .filter(|s| s.borrow().devices.contains(&id))
-            .map(|_| self.windows[id].device.save())
+            .map(|_| {
+                let device = &self.windows[id].device;
+                match device.publication_generation() {
+                    Some(generation) => Publication::Generation(generation),
+                    None => Publication::State(device.save()),
+                }
+            })
     }
-    fn publication_after(&self, id: usize, before: Option<Value>) {
+    fn publication_after(&self, id: usize, before: Option<Publication>) {
         if let Some(before) = before {
-            if before != self.windows[id].device.save() {
+            let device = &self.windows[id].device;
+            let changed = match before {
+                Publication::Generation(generation) => device.publication_generation() != Some(generation),
+                Publication::State(state) => device.save() != state,
+            };
+            if changed {
                 if let Some(stops) = &self.continuation {
                     stops.borrow_mut().device(id);
                 }
@@ -284,7 +354,8 @@ impl Bus {
             .collect()
     }
 
-    pub fn device_fingerprints(&self, kind: &str) -> Result<Vec<Value>, String> {
+    /// Complete device state values without diagnostic summary fallbacks.
+    pub fn device_state_values(&self, kind: &str) -> Result<Vec<Value>, String> {
         self.windows
             .iter()
             .filter(|node| node.device.name() == kind)
@@ -293,7 +364,10 @@ impl Bus {
     }
 
     pub fn device_buffer(&self, kind: &str, name: &str) -> Result<Vec<u8>, String> {
-        let mut devices = self.windows.iter().filter(|node| node.device.name() == kind);
+        let mut devices = self
+            .windows
+            .iter()
+            .filter(|node| node.device.name() == kind);
         let device = devices.next().ok_or("no matching device")?;
         if devices.next().is_some() {
             return Err("buffer observation requires one matching device".into());
@@ -333,11 +407,16 @@ impl Bus {
         for (device, sources) in dependencies {
             bus.native_dependencies(device, sources)?;
         }
+        let names = bus
+            .windows
+            .iter()
+            .map(|window| window.device.name())
+            .collect::<Vec<_>>();
+        fujimod_perf::register_devices(&names);
         Ok(bus)
     }
     pub fn new(mode: Mode) -> Self {
         Self {
-            host_profile: None,
             transactions: None,
             continuation: None,
             windows: vec![],
@@ -354,52 +433,6 @@ impl Bus {
             wake_queue: vec![],
             visited: vec![],
             wake_generation: 0,
-        }
-    }
-    pub(super) fn start_host_profile(
-        &mut self,
-        baseline: Vec<super::host_profile::CpuCounters>,
-    ) -> Result<(), String> {
-        self.host_profile = Some(super::host_profile::Profile::new(baseline)?);
-        Ok(())
-    }
-    pub(super) fn profile_begin_run(&mut self) -> Option<super::host_profile::Stamp> {
-        self.host_profile.as_mut().map(|p| p.begin_run())
-    }
-    pub(super) fn profile_finish_run(&mut self, stamp: Option<super::host_profile::Stamp>) {
-        if let (Some(p), Some(stamp)) = (&mut self.host_profile, stamp) {
-            p.finish_run(stamp);
-        }
-    }
-    pub(super) fn profile_begin_engine(&self) -> Option<super::host_profile::Stamp> {
-        self.host_profile.as_ref().map(|p| p.start())
-    }
-    pub(super) fn profile_finish_engine(
-        &mut self,
-        core: usize,
-        stamp: Option<super::host_profile::Stamp>,
-    ) {
-        if let (Some(p), Some(stamp)) = (&mut self.host_profile, stamp) {
-            p.record_engine(core, stamp);
-        }
-    }
-    pub(super) fn host_profile(
-        &self,
-        counters: impl FnOnce() -> Vec<Result<super::host_profile::CpuCounters, String>>,
-    ) -> Value {
-        self.host_profile
-            .as_ref()
-            .map(|p| p.report(|id| self.windows[id].device.name(), &counters()))
-            .unwrap_or(Value::Null)
-    }
-    fn record_host_time(
-        &mut self,
-        id: usize,
-        phase: &'static str,
-        start: Option<super::host_profile::Stamp>,
-    ) {
-        if let (Some(profile), Some(start)) = (&mut self.host_profile, start) {
-            profile.record(id, phase, start);
         }
     }
     pub fn inputs_changed(&mut self, device: usize) -> Result<(), String> {
@@ -500,11 +533,7 @@ impl Bus {
     /// Published reads that fall inside this CPU's physical MMIO mapping.
     /// Device declarations are relative to their registered windows; return
     /// offsets relative to the requested mapping for the CPU backend.
-    pub(super) fn fast_reads(
-        &self,
-        physical_base: u64,
-        bytes: usize,
-    ) -> Vec<(u64, FastReadValue)> {
+    pub(super) fn fast_reads(&self, physical_base: u64, bytes: usize) -> Vec<(u64, FastReadValue)> {
         let Some(physical_end) = physical_base.checked_add(bytes as u64) else {
             return Vec::new();
         };
@@ -654,11 +683,10 @@ impl Bus {
         if self.transactions.is_some() {
             return Err("Another bus transaction observer is active".into());
         }
-        if ranges.is_empty()
-            || limit == 0
-            || ranges.iter().any(|&(begin, end)| begin >= end)
-        {
-            return Err("Bus transaction watch requires bounded address windows and records".into());
+        if ranges.is_empty() || limit == 0 || ranges.iter().any(|&(begin, end)| begin >= end) {
+            return Err(
+                "Bus transaction watch requires bounded address windows and records".into(),
+            );
         }
         self.transactions = Some(Transactions {
             limit,
@@ -674,7 +702,11 @@ impl Bus {
     }
 
     pub fn transaction_watch_end(&mut self) -> Result<TransactionBatch, String> {
-        if !self.transactions.as_ref().is_some_and(|log| log.ranges.is_some()) {
+        if !self
+            .transactions
+            .as_ref()
+            .is_some_and(|log| log.ranges.is_some())
+        {
             return Err("No scoped bus transaction observer is active".into());
         }
         let log = self.transactions.take().unwrap();
@@ -754,7 +786,15 @@ impl Bus {
         let mut continuation = None;
         if let Some(id) = index {
             let publication = self.publication_before(id);
-            let started = self.host_profile.as_ref().map(|p| p.start());
+            let started = fujimod_perf::device(
+                u16::try_from(id).unwrap_or(u16::MAX),
+                self.windows[id].device.name(),
+                if value.is_some() {
+                    fujimod_perf::DevicePhase::AdvanceWrite
+                } else {
+                    fujimod_perf::DevicePhase::AdvanceRead
+                },
+            );
             self.touch(id);
             let device = &mut self.windows[id].device;
             let mut phase = "advance";
@@ -798,15 +838,7 @@ impl Bus {
                 }
                 Ok(supported)
             })();
-            self.record_host_time(
-                id,
-                if value.is_some() {
-                    "advance-and-write"
-                } else {
-                    "advance-and-read"
-                },
-                started,
-            );
+            drop(started);
             self.publication_after(id, publication);
             supported = match outcome {
                 Ok(supported) => supported,
@@ -893,8 +925,16 @@ impl Bus {
         let due = self
             .deadline(device, host.now())
             .is_some_and(|t| t <= host.now());
+        let started = fujimod_perf::device(
+            u16::try_from(device).unwrap_or(u16::MAX),
+            self.windows[device].device.name(),
+            if token.is_some() {
+                fujimod_perf::DevicePhase::Event
+            } else {
+                fujimod_perf::DevicePhase::Deadline
+            },
+        );
         let w = &mut self.windows[device];
-        let started = self.host_profile.as_ref().map(|p| p.start());
         let mut cx = Cx::new(host, usize::MAX, 0, device);
         if let Some(token) = token {
             w.device.event(&mut cx, token);
@@ -909,12 +949,8 @@ impl Bus {
             detail.clone().map_or(Ok(true), Err)
         };
         drop(cx);
+        drop(started);
         self.publication_after(device, publication);
-        self.record_host_time(
-            device,
-            if token.is_some() { "event" } else { "deadline" },
-            started,
-        );
         if outcome != Ok(true) {
             self.skip_refusal(
                 host.now(),
@@ -1010,11 +1046,15 @@ impl Bus {
                     .is_some_and(|t| t <= host.now())
                 {
                     let mut cx = Cx::new(host, usize::MAX, 0, id);
-                    let started = self.host_profile.as_ref().map(|p| p.start());
+                    let started = fujimod_perf::device(
+                        u16::try_from(id).unwrap_or(u16::MAX),
+                        self.windows[id].device.name(),
+                        fujimod_perf::DevicePhase::Dependency,
+                    );
                     self.windows[id].device.advance(&mut cx);
                     let outcome = Self::outcome(&mut cx);
                     drop(cx);
-                    self.record_host_time(id, "dependency", started);
+                    drop(started);
                     if outcome != Ok(true) {
                         self.skip_refusal(
                             host.now(),
@@ -1164,7 +1204,7 @@ mod tests {
         }
     }
     #[test]
-    fn fingerprint_uses_complete_device_state_without_building_diagnostic_summaries() {
+    fn state_capture_uses_complete_device_state_without_building_diagnostic_summaries() {
         struct Complete;
         impl Device for Complete {
             fn name(&self) -> &'static str {
@@ -1173,8 +1213,11 @@ mod tests {
             fn save(&self) -> Value {
                 panic!("discarded diagnostic allocation")
             }
-            fn fingerprint(&self) -> Result<Value, String> {
-                Ok(json!({"payload":[1,2,3],"pending":7}))
+            fn checkpoint(&self) -> Result<fujimod_emulator_devices::checkpoint::Checkpoint, String> {
+                fujimod_emulator_devices::checkpoint::Checkpoint::encode(
+                    "complete",
+                    &json!({"payload":[1,2,3],"pending":7}),
+                )
             }
             fn read(&mut self, _: &mut Cx<'_>, _: u64, _: u8) -> u64 {
                 unreachable!()
@@ -1184,19 +1227,37 @@ mod tests {
             }
         }
         let mut bus = Bus::new(Mode::Strict);
-        let mut expected = bus.state();
         bus.register(0x1000, 4, Box::new(Complete)).unwrap();
-        assert_eq!(bus.device_fingerprints("complete").unwrap(), vec![json!({"payload":[1,2,3],"pending":7})]);
-        assert!(bus.device_fingerprints("absent").unwrap().is_empty());
-        expected["devices"] = json!([{"kind":"complete","windows":bus.windows[0].mappings,
-            "native_dependencies":[],"state":{"payload":[1,2,3],"pending":7}}]);
-        expected["skipped_deadlines"] = json!({});
-        expected["wakeups"] =
-            json!({"touched":bus.touched,"dirty":bus.dirty,"queue":bus.wake_queue});
+        let state = bus.state_capture().unwrap();
+        assert_eq!(state.devices.len(), 1);
+        assert_eq!(state.devices[0].kind, "complete");
         assert_eq!(
-            serde_json::to_vec(&bus.fingerprint().unwrap()).unwrap(),
-            serde_json::to_vec(&expected).unwrap()
+            state.devices[0].checkpoint,
+            fujimod_emulator_devices::checkpoint::Checkpoint::encode(
+                "complete",
+                &json!({"payload":[1,2,3],"pending":7})
+            )
+            .unwrap()
         );
+        assert!(state.skipped_deadlines.is_empty());
+        assert_eq!(state.touched, bus.touched);
+        assert_eq!(state.dirty, bus.dirty);
+        assert_eq!(state.wake_queue, bus.wake_queue);
+
+        struct Incomplete;
+        impl Device for Incomplete {
+            fn name(&self) -> &'static str {
+                "incomplete"
+            }
+            fn read(&mut self, _: &mut Cx<'_>, _: u64, _: u8) -> u64 {
+                unreachable!()
+            }
+            fn write(&mut self, _: &mut Cx<'_>, _: u64, _: u8, _: u64) {
+                unreachable!()
+            }
+        }
+        bus.register(0x2000, 4, Box::new(Incomplete)).unwrap();
+        assert!(bus.state_capture().unwrap_err().contains("incomplete"));
     }
 
     struct Register(u64);
@@ -1326,17 +1387,12 @@ mod tests {
     }
 
     #[test]
-    fn host_profiling_is_observational_and_never_enters_guest_state() {
+    fn device_dispatch_observations_never_enter_guest_or_device_state() {
         let mut plain = Bus::new(Mode::Strict);
         let mut observed = Bus::new(Mode::Strict);
         for bus in [&mut plain, &mut observed] {
             bus.register(0x1000, 4, Box::new(Register(5))).unwrap();
         }
-        assert_eq!(
-            observed.host_profile(|| panic!("inactive profiler queried CPU")),
-            Value::Null
-        );
-        observed.start_host_profile(Vec::new()).unwrap();
         for value in [None, Some(19), None] {
             assert_eq!(
                 plain.access(&mut Services, 0, 0, 0x1000, 4, value),
@@ -1344,19 +1400,6 @@ mod tests {
             );
             assert_eq!(plain.state(), observed.state());
         }
-        let before = observed.state();
-        let report = observed.host_profile(Vec::new);
-        assert_eq!(report["devices"].as_array().unwrap().len(), 2);
-        assert_eq!(
-            report["devices"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|v| v["calls"].as_u64().unwrap())
-                .sum::<u64>(),
-            3
-        );
-        assert_eq!(before, observed.state());
     }
 
     #[test]

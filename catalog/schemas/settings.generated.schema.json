@@ -44,7 +44,7 @@
           "type": "integer"
         },
         "sha256": {
-          "description": "Lowercase hexadecimal SHA-256 of the window.",
+          "description": "Build/cache identity of the window; unused when loading settings.",
           "type": "string"
         }
       },
@@ -494,6 +494,16 @@
           "$ref": "#/$defs/UpdateRange",
           "description": "Stock header defaults. Byte 14 is the marker `0xaa`; byte 15 holds the\nchecksum that makes the sixteen bytes sum to zero."
         },
+        "loader_offset": {
+          "default": null,
+          "description": "X-Processor 4 only: the header's offset in the boot loader's handoff\nblock. Absent for X-Processor Pro, whose header goes to sub-CPU\nregisters.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "records": {
           "additionalProperties": {
             "$ref": "#/$defs/ProfileRecord"
@@ -556,7 +566,7 @@
           "type": "integer"
         },
         "sha256": {
-          "description": "Lowercase hexadecimal SHA-256 of the decoded section.",
+          "description": "Build/cache identity of the decoded section; unused when loading settings.",
           "type": "string"
         },
         "size": {
@@ -576,7 +586,7 @@
     },
     "UpdateRange": {
       "additionalProperties": false,
-      "description": "Bytes at a firmware address in the decoded update, identified by SHA-256.",
+      "description": "A bounded range at a firmware address in the decoded update.",
       "properties": {
         "address": {
           "description": "Firmware address.",
@@ -585,7 +595,7 @@
           "type": "integer"
         },
         "sha256": {
-          "description": "Lowercase hexadecimal SHA-256 of the stock bytes.",
+          "description": "Build/cache identity of the stock bytes; unused when loading settings.",
           "type": "string"
         },
         "size": {

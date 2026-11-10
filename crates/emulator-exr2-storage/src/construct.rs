@@ -1,11 +1,11 @@
 //! EXR II board constructors for this crate's models.
 use crate::{nand, sdio};
-use fujimod_emulator_ip::sdhci::host as sdhc;
 use fujimod_emulator_devices::parts::sd_card;
 use fujimod_emulator_exr2_plan::{
     Card, Model,
     construction::{Builder, Built, Constructors, decode, line},
 };
+use fujimod_emulator_ip::sdhci::host as sdhc;
 use fujimod_emulator_parts_io::wifi_module::WifiModule;
 use fujimod_emulator_storage::fat;
 
@@ -44,6 +44,7 @@ fn sd_host(builder: Builder<'_>, model: Model) -> Result<Built, String> {
     } = builder;
     let Model::SdHost {
         options,
+        clock_gate,
         card,
         pins,
         present,
@@ -114,6 +115,11 @@ fn sd_host(builder: Builder<'_>, model: Model) -> Result<Built, String> {
                 irq: line(irq)?,
             },
         )?;
+        let host = if let Some(clock) = clock_gate {
+            host.with_register_gate(resources.clock(&clock)?.sd0_gate())
+        } else {
+            host
+        };
         built.contacts.insert(name.to_owned(), contacts);
         Box::new(host)
     }))

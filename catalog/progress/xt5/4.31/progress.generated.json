@@ -5,7 +5,7 @@
   "model": "X-T5",
   "version": "4.31",
   "facts": {
-    "located": 16,
+    "located": 17,
     "total": 18
   },
   "boot_rom": null,
@@ -22,7 +22,7 @@
         {
           "id": "analysis",
           "title": "Function index built and facts located",
-          "result": "not-run"
+          "result": "pass"
         },
         {
           "id": "catalog",
@@ -37,7 +37,7 @@
         {
           "id": "bulk-source",
           "title": "Bulk read source located",
-          "result": "pass"
+          "result": "stale"
         },
         {
           "id": "flash-reader",
@@ -47,32 +47,42 @@
         {
           "id": "state-regions",
           "title": "State-dump regions located",
-          "result": "not-run"
+          "result": "pass"
         },
         {
           "id": "restart-facts",
           "title": "USB restart request located",
-          "result": "not-run"
+          "result": "stale"
         },
         {
           "id": "card-files",
           "title": "Optional card file access located",
-          "result": "not-run"
+          "result": "stale"
         },
         {
           "id": "controls",
           "title": "Physical controls mapped to firmware inputs",
-          "result": "pass"
+          "result": "stale"
         },
         {
           "id": "settings-layout",
           "title": "Settings layout located",
-          "result": "pass"
+          "result": "stale"
         },
         {
           "id": "sd-facts",
           "title": "SD-boot load map and packaging located",
           "result": "pass"
+        },
+        {
+          "id": "nand-boot-facts",
+          "title": "EXR II NAND bootloader facts located",
+          "result": "not-run"
+        },
+        {
+          "id": "boot-patch-facts",
+          "title": "Boot-patch triggers, clears and free spaces located",
+          "result": "not-run"
         }
       ]
     },
@@ -86,6 +96,16 @@
           "result": "not-run"
         },
         {
+          "id": "sd-boot-v2-autostart-starts-in-emulator",
+          "title": "SD boot v2: autostart starts in the emulator",
+          "result": "not-run"
+        },
+        {
+          "id": "sd-boot-v2-patch-triggers-fire-in-emulator",
+          "title": "SD boot v2: patch triggers fire in the emulator",
+          "result": "not-run"
+        },
+        {
           "id": "menu",
           "title": "Menus respond to remote control",
           "result": "not-run"
@@ -96,13 +116,18 @@
           "result": "not-run"
         },
         {
-          "id": "emulator-sd-boot",
-          "title": "Our SD card of the stock firmware boots",
+          "id": "sd-boot-v1-stock-boots-in-emulator",
+          "title": "SD boot v1: stock firmware boots from an SD card in the emulator",
           "result": "not-run"
         },
         {
-          "id": "emulator-updater",
-          "title": "The stock updater installs an update from the card",
+          "id": "firmware-update-stock-installs-in-emulator",
+          "title": "Firmware update: stock updater installs an update from an SD card in the emulator",
+          "result": "not-run"
+        },
+        {
+          "id": "sd-boot-v2-fujimod-boots-in-emulator",
+          "title": "SD boot v2: FujiMod boots from an SD card in the emulator",
           "result": "not-run"
         }
       ]
@@ -183,6 +208,11 @@
       "title": "FujiMod",
       "stages": [
         {
+          "id": "language-font-bank",
+          "title": "Language font bank located and kept out of mod memory",
+          "result": "stale"
+        },
+        {
           "id": "mod-target",
           "title": "Mod target generated from facts",
           "result": "not-run"
@@ -198,13 +228,18 @@
           "result": "not-run"
         },
         {
-          "id": "sd-image",
-          "title": "Dual-boot SD image built",
+          "id": "sd-boot-v1-fujimod-built",
+          "title": "SD boot v1: FujiMod SD image built",
           "result": "not-run"
         },
         {
-          "id": "flash-update",
-          "title": "Flashable update built",
+          "id": "firmware-update-fujimod-built",
+          "title": "Firmware update: FujiMod update built",
+          "result": "not-run"
+        },
+        {
+          "id": "sd-boot-v2-fujimod-built",
+          "title": "SD boot v2: FujiMod release built",
           "result": "not-run"
         }
       ]
@@ -214,28 +249,38 @@
       "title": "SD card and install",
       "stages": [
         {
-          "id": "sd-select",
-          "title": "The boot ROM loads a green-LED card",
+          "id": "boot-rom-loads-sd-card-on-camera",
+          "title": "Boot ROM: loads an SD card on a camera",
           "result": "not-run"
         },
         {
-          "id": "sd-stock-boot",
-          "title": "Our card dual-boots the stock firmware",
+          "id": "sd-boot-v1-stock-boots-on-camera",
+          "title": "SD boot v1: stock firmware boots from an SD card on a camera",
           "result": "not-run"
         },
         {
-          "id": "sd-recovery",
-          "title": "A flash-free card applies an official update",
+          "id": "sd-boot-v1-fujimod-boots-on-camera",
+          "title": "SD boot v1: FujiMod boots from an SD card on a camera",
           "result": "not-run"
         },
         {
-          "id": "sd-boot",
-          "title": "FujiMod boots from the card",
+          "id": "sd-boot-v2-fujimod-boots-on-camera",
+          "title": "SD boot v2: FujiMod boots from an SD card on a camera",
           "result": "not-run"
         },
         {
-          "id": "full-install",
-          "title": "FujiMod installed as a firmware update",
+          "id": "sd-boot-v2-autostart-installs-on-camera",
+          "title": "SD boot v2: autostart installs on a camera",
+          "result": "not-run"
+        },
+        {
+          "id": "firmware-update-stock-installs-on-camera",
+          "title": "Firmware update: stock updater installs an update from an SD card on a camera",
+          "result": "not-run"
+        },
+        {
+          "id": "firmware-update-fujimod-installs-on-camera",
+          "title": "Firmware update: FujiMod installs on a camera",
           "result": "not-run"
         }
       ]
@@ -290,6 +335,7 @@
     "film-sims": "not-run",
     "card-films": "not-run",
     "film-editor": "not-run",
+    "film-grain": "not-run",
     "highlight-meter": "not-run",
     "raw-view": "not-run",
     "f-log": "not-run",
@@ -298,6 +344,7 @@
     "controls": "not-run",
     "menu-theme": "not-run",
     "overlay-opacity": "not-run",
+    "menu-animations": "not-run",
     "menu-tap": "not-run",
     "glgui": "not-run",
     "recipes": "not-run",
@@ -306,6 +353,8 @@
     "af-scene-capture": "not-run",
     "bug-report": "not-run",
     "sd-volume-name": "not-run",
-    "date-folders": "not-run"
+    "date-folders": "not-run",
+    "software-nd": "not-run",
+    "ota-runtime": "not-run"
   }
 }

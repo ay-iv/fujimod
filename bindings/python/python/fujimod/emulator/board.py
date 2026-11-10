@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sys
 import weakref
 from collections.abc import Buffer, Mapping, Sequence
@@ -11,6 +12,7 @@ from os import PathLike, fspath
 from typing import Literal, Protocol, Self, TypedDict, TypeGuard, cast
 
 from fujimod._native import emulator as _native
+from .. import perf as _perf
 
 from .definition import Definition, Xp4Definition
 from .processor import Processor
@@ -55,6 +57,46 @@ def _json_object(value: object) -> dict[str, object]:
     if not _is_json_object(value):
         raise TypeError("Native JSON result must be a string-keyed object")
     return value
+
+
+class BoardState(dict[str, object]):
+    """Diagnostic board state with direct complete-state equality."""
+
+    def __init__(self, diagnostic: dict[str, object], native: _native.emulator.BoardState) -> None:
+        super().__init__(diagnostic)
+        self._native = native
+        self._complete: dict[str, object] | None = None
+
+    def _load_complete(self) -> None:
+        if self._complete is None:
+            self._complete = _json_object(json.loads(self._native.json()))
+            self.update(self._complete)
+
+    def __getitem__(self, key: str) -> object:
+        if key not in self:
+            self._load_complete()
+        return super().__getitem__(key)
+
+    def get(self, key: str, default: object = None) -> object:
+        if key not in self:
+            self._load_complete()
+        return super().get(key, default)
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, BoardState):
+            return self._native == other._native
+        return dict.__eq__(self, other)
+
+    def __ne__(self, other: object) -> bool:
+        return not self == other
+
+    __hash__ = None
+
+    def diff(self, other: BoardState) -> str | None:
+        """First structural difference from another captured state."""
+        if not isinstance(other, BoardState):
+            raise TypeError("state comparison requires another BoardState")
+        return self._native.diff(other._native)
 
 
 def _boot_report(value: object) -> BootReport:
@@ -121,9 +163,14 @@ class Board:
             if not isinstance(data, Buffer):
                 raise TypeError(f"asset {asset_id} must be bytes-like")
         loaded = {asset_id: bytes(data) for asset_id, data in assets.items()}
-        _native.verify_input_assets(
-            json.dumps([asset.manifest() for asset in definition.assets]), loaded
-        )
+        declared = {asset.id: asset for asset in definition.assets}
+        for asset in declared.values():
+            if asset.id not in loaded:
+                raise ValueError(f"missing input asset {asset.id}")
+            if len(loaded[asset.id]) != asset.size:
+                raise ValueError(f"input asset {asset.id} size differs")
+        if set(declared) != set(loaded):
+            raise ValueError("undeclared input assets")
         images = []
         for image in definition.images:
             if image.asset not in loaded:
@@ -189,6 +236,9 @@ class Board:
         clock_seconds_2000: int | None = None,
         preferred_languages: Sequence[str] = (),
         camera: str | PathLike[str] | None = None,
+        access_point: Mapping[str, object] | None = None,
+        capability_reply: Sequence[int] | None = None,
+        ram_fill: int | None = None,
     ) -> Self:
         """Boot a catalog runtime from files selected by the caller.
 
@@ -213,6 +263,19 @@ class Board:
         ``camera`` is a camera directory holding the ``nand-<section>.bin.zst``
         files a configuration's power-on settings name, such as
         ``catalog/bodies/x70/cameras/reference``.
+
+        ``access_point`` is one virtual MT5931 access point: SSID, BSSID,
+        channel, RCPI, gateway, DNS servers, DNS name, TCP destination, host
+        loopback port and optional NTP server. Absence leaves the endpoint
+        without an RF peer.
+
+        ``ram_fill`` initializes physical RAM to this byte before loading the
+        ROM and retains physical RAM across modeled restarts. None uses the
+        default zero-filled fresh memory.
+
+        ``capability_reply`` is an explicit 20-byte MT5931 capability body,
+        needed before stock Wi-Fi initialization accepts command 0x80. It is a
+        declared fixture, not a recovered chip reply.
         """
         configuration_id = cls._identifier(configuration_id, "configuration_id")
         if isinstance(overlays, (str, bytes)) or not isinstance(overlays, Sequence):
@@ -227,6 +290,18 @@ class Board:
         nand = None if nand is None else cls._input_path(nand, "nand")
         settings = None if settings is None else cls._input_path(settings, "settings")
         camera = None if camera is None else fspath(camera)
+        access_point_text = None
+        if access_point is not None:
+            if not isinstance(access_point, Mapping):
+                raise TypeError("access_point must be a mapping or None")
+            access_point_text = json.dumps(dict(access_point))
+        capability = None
+        if capability_reply is not None:
+            if isinstance(capability_reply, (str, bytes)):
+                raise TypeError("capability_reply must be a sequence of byte values")
+            capability = bytes(capability_reply)
+            if len(capability) != 20:
+                raise ValueError("capability_reply must contain 20 bytes")
         if isinstance(preferred_languages, (str, bytes)) or not isinstance(preferred_languages, Sequence):
             raise TypeError("preferred_languages must be a sequence of BCP 47 tags")
         if any(not isinstance(tag, str) for tag in preferred_languages):
@@ -236,6 +311,8 @@ class Board:
                 raise TypeError("clock_seconds_2000 must be a non-bool integer or None")
             if not 0 <= clock_seconds_2000 <= 0xFFFFFFFF:
                 raise ValueError("clock_seconds_2000 must be in 0..=0xFFFFFFFF")
+        if ram_fill is not None and (type(ram_fill) is not int or not 0 <= ram_fill <= 255):
+            raise ValueError("ram_fill must be a byte or None")
         native = _native.Board.from_inputs(
             configuration_id=configuration_id,
             overlays=selected_overlays,
@@ -246,6 +323,9 @@ class Board:
             clock_seconds_2000=clock_seconds_2000,
             preferred_languages=list(preferred_languages),
             camera=camera,
+            access_point=access_point_text,
+            capability_reply=capability,
+            ram_fill=ram_fill,
         )
         quantum = native.boot_quantum
         if type(quantum) is not int or quantum < 1:
@@ -378,11 +458,13 @@ class Board:
         pause_at_tick: int | None = None,
         store_watches: list[tuple[int, int]] | None = None,
         device_watches: list[str] | None = None,
+        contact_watch: bool = False,
     ) -> bool:
         """Run within instruction and optional pause limits.
 
         ``store_watches`` contains half-open physical address ranges;
-        ``device_watches`` contains nodes in the selected device graph.
+        ``device_watches`` contains nodes in the selected device graph;
+        ``contact_watch`` ends the run after the host contact queue changes.
         Watches apply only to this call. Return whether a watched store or
         device publication ended the continuation, including at the current tick.
         """
@@ -404,6 +486,7 @@ class Board:
             pause_at_tick,
             store_watches,
             device_watches,
+            contact_watch,
         )
 
     def run_until(self, tick: int) -> None:
@@ -479,15 +562,17 @@ class Board:
         self._validate_range(address, len(payload))
         self._native.physical_write(address, payload)
 
-    def state(self) -> dict[str, object]:
-        """Return the current execution and device state."""
+    def state(self) -> BoardState:
+        """Return the current diagnostic and complete modeled state."""
         self._ensure_open()
-        return _json_object(json.loads(self._native.state()))
+        return BoardState(
+            _json_object(json.loads(self._native.state())), self._native.complete_state()
+        )
 
-    def fingerprint(self) -> dict[str, object]:
-        """Return a stable snapshot of execution-relevant state."""
+    def complete_state_json(self) -> dict[str, object]:
+        """Return the complete modeled state as direct JSON."""
         self._ensure_open()
-        return _json_object(json.loads(self._native.fingerprint()))
+        return _json_object(json.loads(self._native.complete_state().json()))
 
     def checkpoint(
         self, previous: _native.Checkpoint | None = None
@@ -505,6 +590,7 @@ class Board:
         """Release the native board; repeated calls are safe."""
         if self._closed:
             return
+        _perf.detach_board(self)
         self._native.close()
         self._closed = True
 
@@ -595,6 +681,28 @@ class Session:
         if any(type(value) is not int or not 0 <= value <= 0xFFFF for value in values):
             raise ValueError("ADC samples must be unsigned 16-bit integers")
         self._native_board().set_adc_samples(self._node(node), list(values))
+
+    def gravity_g(self, node: str) -> tuple[float, float, float]:
+        """Return the external gravity input at an attached accelerometer."""
+        x, y, z = self._native_board().gravity_g(self._node(node))
+        return x, y, z
+
+    def set_gravity_g(self, node: str, gravity: Sequence[float]) -> None:
+        """Replace the accelerometer's external gravity vector in sensor axes."""
+        if isinstance(gravity, (str, bytes, bytearray)) or not isinstance(
+            gravity, Sequence
+        ):
+            raise TypeError("gravity must be a sequence of three finite numbers")
+        values = tuple(gravity)
+        if len(values) != 3:
+            raise ValueError("gravity must contain three components")
+        if any(
+            isinstance(value, bool) or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            for value in values
+        ):
+            raise ValueError("gravity components must be finite numbers")
+        self._native_board().set_gravity_g(self._node(node), [float(value) for value in values])
 
     def input_graph(self) -> dict[str, object]:
         """Return input-capable nodes and their checked graph mappings."""
